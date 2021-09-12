@@ -4,11 +4,12 @@
 const { Addr } = require('./addr.js');
 const Value128 = require('../util/value128.js');
 const { BigInt64 } = require('../util/general.js');
+const Int64 = require('../util/int64.js');
 
 const { MAX_SPARSE_SIZE_INTEGER } = require('./statics.js');
 
-const ZERO_ADDR = Addr(0n, 0n);
-const ZERO_VONETWENTYEIGHT = Value128(0n, 0n);
+const ZERO_ADDR = Addr(Int64.ZERO, Int64.ZERO);
+const ZERO_VONETWENTYEIGHT = Value128(Int64.ZERO, Int64.ZERO);
 
 
 // A DataSpan that represents a sparse sequence of bytes (0). The size limit of
@@ -36,12 +37,12 @@ function SparseDataSpan(addr) {
 
     function readBigInt(offset) {
         checkCanRead(offset, 8);
-        return BigInt64(0);
+        return BigInt64(0n);
     }
 
     function readBigUInt(offset) {
         checkCanRead(offset, 8);
-        return BigInt64(0);
+        return BigInt64(0n);
     }
 
     function readDouble(offset) {
@@ -52,6 +53,11 @@ function SparseDataSpan(addr) {
     function readFloat(offset) {
         checkCanRead(offset, 4);
         return 0;
+    }
+
+    function readInt64(offset) {
+        checkCanRead(offset, 8);
+        return Int64.ZERO;
     }
 
     function readInt32(offset) {
@@ -145,6 +151,7 @@ function SparseDataSpan(addr) {
         readBigUInt,
         readDouble,
         readFloat,
+        readInt64,
         readInt32,
         readInt16,
         readInt8,

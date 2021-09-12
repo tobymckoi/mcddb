@@ -104,6 +104,12 @@ function DataBuffer(addr, buf, size, limit, dataspan_addr, PROTECTED_ACCESS) {
         return buf.writeFloatBE(val, offset);
     }
 
+    function writeInt64(val, offset) {
+        checkCanWrite(offset, 8);
+        buf.writeUInt32BE( val.getHighBitsUnsigned(), offset + 0 );
+        return buf.writeUInt32BE( val.getLowBitsUnsigned(), offset + 4 );
+    }
+
     function writeInt32(val, offset) {
         checkCanWrite(offset, 4);
         return buf.writeInt32BE(val, offset);
@@ -289,7 +295,7 @@ function DataBuffer(addr, buf, size, limit, dataspan_addr, PROTECTED_ACCESS) {
             const addr = Addr( buf.slice(offset, offset + 16), true );
             // Search for substitution addrs_in -> addrs_out
             for (let i = 0; i < addrs_in.length; ++i) {
-                if ( addr.isEqual( addrs_in[i] ) === true ) {
+                if ( addr.eq( addrs_in[i] ) ) {
                     // Make substitution,
                     addrs_out[i].copyTo(buf, offset);
                     is_modified = true;
@@ -375,6 +381,7 @@ function DataBuffer(addr, buf, size, limit, dataspan_addr, PROTECTED_ACCESS) {
         writeBigUInt,
         writeDouble,
         writeFloat,
+        writeInt64,
         writeInt32,
         writeInt16,
         writeInt8,

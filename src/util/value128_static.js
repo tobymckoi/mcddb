@@ -13,7 +13,7 @@ function v128HashFunction(v1) {
 // Equality test for 128 bit values,
 
 function v128EqualsFunction(v1, v2) {
-    return v1.isEqual(v2);
+    return v1.eq(v2);
 }
 
 

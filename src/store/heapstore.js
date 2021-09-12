@@ -6,6 +6,8 @@ const SparseDataSpan = require('./sparsedataspan.js');
 const DataSpan = require('./dataspan.js');
 const DataBuffer = require('./databuffer.js');
 
+const Int64 = require('../util/int64.js');
+
 const { createInMemoryBranchAddr,
         createInMemoryLeafAddr,
         isBranchNodeAddr,
@@ -26,11 +28,11 @@ const addrEqualsFunction = Value128Static.v128EqualsFunction;
 const PROTECTED_ACCESS = Symbol('HeapStore Protected');
 
 
-function HeapStore(DSPAN_LIMIT = 8192) {
+function HeapStore( DSPAN_LIMIT = 8192 ) {
 
 
     // BigInt identifier for stored addresses.
-    let cur_stored_id = 0x0cc50n;
+    let cur_stored_id = Int64.fromString('00cc50', true, 16);
 
     // Create the HashMap,
     const store_hashmap = HashMap(addrHashFunction, addrEqualsFunction);
@@ -60,7 +62,7 @@ function HeapStore(DSPAN_LIMIT = 8192) {
             // meta information such is if it's a branch, leaf or sparse,
             // etc
             const addr = convertToStoreAddr(addr_in_set[i], 0, cur_stored_id);
-            cur_stored_id += 1n;
+            cur_stored_id = cur_stored_id.add( Int64.ONE );
             out.push(addr);
         }
         return out;
@@ -136,7 +138,7 @@ function HeapStore(DSPAN_LIMIT = 8192) {
 
 
     // BigInt identifier for in-memory addresses.
-    let cur_inmemory_id = 0n;
+    let cur_inmemory_id = Int64.ZERO;
 
     const in_memory_hashmap = HashMap(addrHashFunction, addrEqualsFunction);
 
@@ -152,7 +154,7 @@ function HeapStore(DSPAN_LIMIT = 8192) {
             ? createInMemoryBranchAddr(cur_inmemory_id)
             : createInMemoryLeafAddr(cur_inmemory_id);
 
-        cur_inmemory_id += 1n;
+        cur_inmemory_id = cur_inmemory_id.add( Int64.ONE );
 
         return addr;
 

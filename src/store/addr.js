@@ -1,17 +1,21 @@
 "use strict";
 
 const Addr = require('../util/value128.js');
-const { BigInt64 } = require('../util/general.js');
+const Int64 = require('../util/int64.js');
 
+const INMEMORY_BRANCH_HIGH_64 = Int64.fromString('7000000000000000', true, 16);
+const INMEMORY_LEAF_HIGH_64   = Int64.fromString('7100000000000000', true, 16);
+
+const SPARSE_LEAF_HIGH_64     = Int64.fromString('63f0000000000000', true, 16);
 
 // Address is an 128-bit buffer, exactly as Key,
 
-function createInMemoryBranchAddr(subval_bigint) {
-    return Addr(0x07000000000000000n, subval_bigint);
+function createInMemoryBranchAddr(subval_int64) {
+    return Addr( INMEMORY_BRANCH_HIGH_64, subval_int64 );
 }
 
-function createInMemoryLeafAddr(subval_bigint) {
-    return Addr(0x07100000000000000n, subval_bigint);
+function createInMemoryLeafAddr(subval_int64) {
+    return Addr( INMEMORY_LEAF_HIGH_64, subval_int64 );
 }
 
 function isBranchNodeAddr(addr) {
@@ -42,11 +46,15 @@ function isConvertableStoreAddr(addr) {
 }
 
 
-function convertToStoreAddr(addr, subval_int, subval_bigint) {
-    let val = BigInt64( (addr.byteAt(0) & 0x0f) | 0x060 );
-    val <<= 56n;
-    val += BigInt64( subval_int );
-    return Addr(val, subval_bigint);
+function convertToStoreAddr(addr, subval_int, subval_int64) {
+
+    const high_byte = (addr.byteAt(0) & 0x0f) | 0x060;
+
+    let val = Int64.fromInt(high_byte);
+    val = val.shiftLeft( 56 );
+    val = val.or( subval_int | 0 );
+    return Addr( val, subval_int64 );
+
 }
 
 
@@ -61,10 +69,10 @@ function convertToStoreAddr(addr, subval_int, subval_bigint) {
 // of the given size. Represents a leaf node that contains a string of
 // zero bytes of 'size_bigint' length.
 
-function createSparseLeafAddr(size_bigint) {
+function createSparseLeafAddr(size_int64) {
     // Store address (6), leaf node bit set and special code bit set.
     // 'f0' represents it being a sparse leaf node.
-    return Addr(0x063f0000000000000n, size_bigint);
+    return Addr( SPARSE_LEAF_HIGH_64, size_int64 );
 }
 
 function isSparseLeafAddr(addr) {

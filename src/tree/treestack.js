@@ -2,12 +2,13 @@
 
 const { KeyStatics } = require('./key.js');
 
-const { BigInt64 } = require('../util/general.js');
-
 const { isBranchNodeAddr,
         isStoreAddr,
         PROC_EMPTY_TREE_ADDR
       } = require('../store/addr.js');
+
+const Int64 = require('../util/int64.js');
+
 
 // Get KeyStatics for far left and right key,
 const { FAR_LEFT_KEY, FAR_RIGHT_KEY } = KeyStatics;
@@ -65,9 +66,9 @@ function StackState() {
         clear();
         data.desired_key = undefined;
         data.loaded_key = undefined;
-        data.absolute_position = -1n;
-        data.absolute_start_position = -1n;
-        data.absolute_end_position = -1n;
+        data.absolute_position = Int64.NEG_ONE;
+        data.absolute_start_position = Int64.NEG_ONE;
+        data.absolute_end_position = Int64.NEG_ONE;
     }
 
     function asString() {
@@ -90,9 +91,9 @@ function StackState() {
         // They key and absolute position of start or end,
         desired_key: undefined,
         loaded_key: undefined,
-        absolute_position: -1n,
-        absolute_start_position: -1n,
-        absolute_end_position: -1n,
+        absolute_position: Int64.NEG_ONE,
+        absolute_start_position: Int64.NEG_ONE,
+        absolute_end_position: Int64.NEG_ONE,
 
         createStackElement,
         pushToStack,
@@ -175,7 +176,7 @@ function TreeStack(store, root_addr) {
 
             const down_addr = node_data.readAddr(n);
             n += 16;
-            const down_size = node_data.readBigInt(n);
+            const down_size = node_data.readInt64(n);
             n += 8;
             const right_key = node_data.readValue128(n);
             n += 16;
@@ -188,7 +189,7 @@ function TreeStack(store, root_addr) {
 
             // Transition to the next key,
             left_key = right_key;
-            left_offset += down_size;
+            left_offset = left_offset.add( down_size );
 
         }
 
@@ -196,7 +197,7 @@ function TreeStack(store, root_addr) {
 
         const down_addr = node_data.readAddr(n);
         n += 16;
-        const down_size = node_data.readBigInt(n);
+        const down_size = node_data.readInt64(n);
         n += 8;
         const right_key = outer_right_key;
 
@@ -227,9 +228,9 @@ function TreeStack(store, root_addr) {
         let left_offset = outer_left_offset;
         const down_size_arr = [];
         for (let i = 16; i < size; i += 40) {
-            const down_size = node_data.readBigInt(i);
+            const down_size = node_data.readInt64(i);
             down_size_arr.push(down_size);
-            left_offset += down_size;
+            left_offset = left_offset.add( down_size );
         }
 
         // Get last reference,
@@ -247,7 +248,7 @@ function TreeStack(store, root_addr) {
             const down_size = down_size_arr[ds_i];
             n += 8;
 
-            left_offset -= down_size;
+            left_offset = left_offset.sub( down_size );
 
             // Should we traverse at this point?
             if ( key.compareTo( left_key ) >= 0 ) {
@@ -272,7 +273,7 @@ function TreeStack(store, root_addr) {
         const down_size = down_size_arr[0];
         n += 8;
 
-        left_offset -= down_size;
+        left_offset = left_offset.sub( down_size );
 
         // Should we traverse at this point?
         if ( key.compareTo( left_key ) >= 0 ) {
@@ -303,11 +304,12 @@ function TreeStack(store, root_addr) {
 
         let offset = 0;
         for (; offset < size - 24; offset += 40) {
-            const down_size = node_data.readBigInt(offset + 16);
-            if ( absolute_pos < left_offset + down_size ) {
+            const down_size = node_data.readInt64(offset + 16);
+            const right_offset = left_offset.add( down_size );
+            if ( absolute_pos.lt( right_offset ) ) {
                 break;
             }
-            left_offset += down_size;
+            left_offset = left_offset.add( down_size );
         }
 
         let left_key, right_key;
@@ -327,7 +329,7 @@ function TreeStack(store, root_addr) {
         }
 
         const down_addr = node_data.readAddr(offset);
-        const down_size = node_data.readBigInt(offset + 16);
+        const down_size = node_data.readInt64(offset + 16);
 
         ss.pushToStack(stack_level, offset, down_addr, down_size, left_offset, left_key, right_key);
         return down_addr;
@@ -347,7 +349,7 @@ function TreeStack(store, root_addr) {
             previous_key: last_stack_entry.left_key,
             // The size of the leaf node ( this is -1 if empty tree ),
             size: last_stack_entry.down_size,
-            // BigInt Offset of node in global address space,
+            // Int64 Offset of node in global address space,
             offset: last_stack_entry.left_offset,
             // Address of the leaf node,
             addr: last_stack_entry.down_addr
@@ -369,15 +371,15 @@ function TreeStack(store, root_addr) {
     async function stackLoadToStartOfKey(key) {
 
         // Key must be > MIN_KEY and < MAX_KEY
-        if ( key.isEqual(FAR_LEFT_KEY) || key.isEqual(FAR_RIGHT_KEY) ) {
+        if ( key.eq(FAR_LEFT_KEY) || key.eq(FAR_RIGHT_KEY) ) {
             throw OutOfBoundsError("key out of range");
         }
 
         ss.desired_key = undefined;
         ss.loaded_key = undefined;
-        ss.absolute_position = -1n;
-        ss.absolute_start_position = -1n;
-        ss.absolute_end_position = -1n;
+        ss.absolute_position = Int64.NEG_ONE;
+        ss.absolute_start_position = Int64.NEG_ONE;
+        ss.absolute_end_position = Int64.NEG_ONE;
 
         // --- populateStackForKey start ---
 
@@ -386,7 +388,7 @@ function TreeStack(store, root_addr) {
 
         // Push root branch to stack,
         let branch_addr = root_addr;
-        ss.pushToStack(0, -1, branch_addr, -1n, 0n, FAR_LEFT_KEY, FAR_RIGHT_KEY);
+        ss.pushToStack(0, -1, branch_addr, Int64.NEG_ONE, Int64.ZERO, FAR_LEFT_KEY, FAR_RIGHT_KEY);
 
         let stack_level = 1;
         // Repeat until we hit a leaf node address,
@@ -418,12 +420,12 @@ function TreeStack(store, root_addr) {
         ss.loaded_key = leaf_node_info.key;
 
         // Did we land on the same key we are searching for?
-        if ( leaf_node_info.key.isEqual(key) ) {
+        if ( leaf_node_info.key.eq(key) ) {
 
             // Start of current,
             ss.absolute_position = leaf_node_info.offset;
             ss.absolute_start_position = leaf_node_info.offset;
-            ss.absolute_end_position = -1n;
+            ss.absolute_end_position = Int64.NEG_ONE;
 
             // Stack should now be setup correctly,
 
@@ -459,15 +461,15 @@ function TreeStack(store, root_addr) {
     async function stackLoadToEndOfKey(key) {
 
         // Key must be > MIN_KEY and < MAX_KEY
-        if ( key.isEqual(FAR_LEFT_KEY) || key.isEqual(FAR_RIGHT_KEY) ) {
+        if ( key.eq(FAR_LEFT_KEY) || key.eq(FAR_RIGHT_KEY) ) {
             throw OutOfBoundsError("key out of range");
         }
 
         ss.desired_key = undefined;
         ss.loaded_key = undefined;
-        ss.absolute_position = -1n;
-        ss.absolute_start_position = -1n;
-        ss.absolute_end_position = -1n;
+        ss.absolute_position = Int64.NEG_ONE;
+        ss.absolute_start_position = Int64.NEG_ONE;
+        ss.absolute_end_position = Int64.NEG_ONE;
 
         // --- populateStackForKey start ---
 
@@ -476,7 +478,7 @@ function TreeStack(store, root_addr) {
 
         // Push root branch to stack,
         let branch_addr = root_addr;
-        ss.pushToStack(0, -1, branch_addr, -1n, 0n, FAR_LEFT_KEY, FAR_RIGHT_KEY);
+        ss.pushToStack(0, -1, branch_addr, Int64.NEG_ONE, Int64.ZERO, FAR_LEFT_KEY, FAR_RIGHT_KEY);
 
         let stack_level = 1;
         // Repeat until we hit a leaf node address,
@@ -507,13 +509,13 @@ function TreeStack(store, root_addr) {
         ss.desired_key = key;
 
         // Did we land on the same key we are searching for?
-        if ( leaf_node_info.previous_key.isEqual(key) ) {
+        if ( leaf_node_info.previous_key.eq(key) ) {
 
             ss.loaded_key = leaf_node_info.previous_key;
 
             // Start of current,
             ss.absolute_position = leaf_node_info.offset;
-            ss.absolute_start_position = -1n;
+            ss.absolute_start_position = Int64.NEG_ONE;
             ss.absolute_end_position = leaf_node_info.offset;
 
             // Stack should now be setup correctly,
@@ -554,16 +556,16 @@ function TreeStack(store, root_addr) {
 
         const entry = ss.lastStackEntry();
         const node_left_absolute_pos = entry.left_offset;
-        const node_right_absolute_pos = node_left_absolute_pos + entry.down_size;
+        const node_right_absolute_pos = node_left_absolute_pos.add( entry.down_size );
 
         // If we are traversing somewhere outside the current node,
-        if ( absolute_pos < node_left_absolute_pos ||
-             absolute_pos >= node_right_absolute_pos ) {
+        if ( absolute_pos.lt( node_left_absolute_pos ) ||
+             absolute_pos.gte( node_right_absolute_pos ) ) {
 
             // Default is the full range,
             let stack_level = ss.getSize() - 1;
-            // let branch_left_absolute_position = 0n;
-            // let branch_right_absolute_position = -1n;
+            // let branch_left_absolute_position = Int64.ZERO;
+            // let branch_right_absolute_position = Int64.NEG_ONE;
 
             // Trace back through stack until we at the level that encompasses
             // the range of the position being traversed to,
@@ -577,10 +579,10 @@ function TreeStack(store, root_addr) {
                     const calc_branch_left_absolute_position =
                                 entry_back_one.left_offset;
                     const calc_branch_right_absolute_position =
-                                entry_back_one.left_offset + entry_back_one.down_size;
+                                entry_back_one.left_offset.add( entry_back_one.down_size );
 
-                    if ( absolute_pos >= calc_branch_left_absolute_position &&
-                         absolute_pos < calc_branch_right_absolute_position ) {
+                    if ( absolute_pos.gte( calc_branch_left_absolute_position ) &&
+                         absolute_pos.lt( calc_branch_right_absolute_position ) ) {
 
                         // branch_left_absolute_position = calc_branch_left_absolute_position;
                         // branch_right_absolute_position = calc_branch_right_absolute_position;
@@ -627,8 +629,9 @@ function TreeStack(store, root_addr) {
             // we are representing, and the left_key is ( which is the case
             // when the position is at the end of the node sequence ).
 
-            if ( last_entry.left_offset === absolute_pos &&
-                 key.isEqual( last_entry.left_key ) === true ) {
+            if ( last_entry.left_offset.eq( absolute_pos ) &&
+                 key.neq( last_entry.right_key ) &&
+                 key.eq( last_entry.left_key ) ) {
 
                 ss.loaded_key = key;
 
@@ -671,10 +674,10 @@ function TreeStack(store, root_addr) {
         const branch_buffer = store.createEmptyDataBuffer( BRANCH );
 
         branch_buffer.writeAddr(     branch_info[0], 0 );
-        branch_buffer.writeBigInt(   branch_info[1], 0 + 16 );
+        branch_buffer.writeInt64(    branch_info[1], 0 + 16 );
         branch_buffer.writeValue128( branch_info[2], 0 + 16 + 8 );
         branch_buffer.writeAddr(     branch_info[3], 0 + 16 + 8 + 16 );
-        branch_buffer.writeBigInt(   branch_info[4], 0 + 16 + 8 + 16 + 16 );
+        branch_buffer.writeInt64(    branch_info[4], 0 + 16 + 8 + 16 + 16 );
 
         return branch_buffer;
 
@@ -688,11 +691,11 @@ function TreeStack(store, root_addr) {
         branch_buffer.shift(40, offset);
 
         branch_buffer.writeAddr(     address_key_set[0], offset );
-        branch_buffer.writeBigInt(   address_key_set[1], offset + 16 );
+        branch_buffer.writeInt64(    address_key_set[1], offset + 16 );
         branch_buffer.writeValue128( address_key_set[2], offset + 16 + 8 );
         if (address_key_set.length > 3) {
             branch_buffer.writeAddr(     address_key_set[3], offset + 16 + 8 + 16 );
-            branch_buffer.writeBigInt(   address_key_set[4], offset + 16 + 8 + 16 + 16 );
+            branch_buffer.writeInt64(    address_key_set[4], offset + 16 + 8 + 16 + 16 );
         }
 
     }
@@ -702,20 +705,20 @@ function TreeStack(store, root_addr) {
 
         for (let se = stack_level; se >= 1; --se) {
             const sentry = ss.getEntry(se);
-            sentry.down_size += size;
+            sentry.down_size = sentry.down_size.add( size );
             const branch_buf = await store.get( ss.getEntry(se - 1).down_addr );
-            branch_buf.writeBigInt( sentry.down_size, sentry.addr_offset + 16 );
+            branch_buf.writeInt64( sentry.down_size, sentry.addr_offset + 16 );
         }
 
     }
 
     function calculateBranchTotalByteSize(branch_node_buf) {
 
-        let size_tally = 0n;
+        let size_tally = Int64.ZERO;
 
         const size = branch_node_buf.getSize();
         for (let p = 0; p < size; p += 40) {
-            size_tally += branch_node_buf.readBigInt(p + 16);
+            size_tally = size_tally.add( branch_node_buf.readInt64(p + 16) );
         }
 
         return size_tally;
@@ -852,7 +855,7 @@ function TreeStack(store, root_addr) {
                     (calc_side * 40),                                  // addr_offset
                     split_info[ calc_side * 3 ],                       // down_addr
                     split_info[ ( calc_side * 3 ) + 1 ],               // down_size
-                    (calc_side === 0) ? 0n : split_info[1],            // left_offset
+                    (calc_side === 0) ? Int64.ZERO : split_info[1],    // left_offset
                     (calc_side === 0) ? FAR_LEFT_KEY : split_info[2],  // left_key
                     (calc_side === 0) ? split_info[2] : FAR_RIGHT_KEY  // right_key
                 );
@@ -901,7 +904,7 @@ function TreeStack(store, root_addr) {
     async function insertLeafNodeToTree(key, absolute_pos, leaf_node_buffer) {
 
         const leaf_addr = leaf_node_buffer.getAddr();
-        const leaf_size = BigInt64( leaf_node_buffer.getSize() );
+        const leaf_size = Int64.fromNumber( leaf_node_buffer.getSize() );
 
         const address_key_set = [ leaf_addr, leaf_size, key ];
 
@@ -987,20 +990,22 @@ function TreeStack(store, root_addr) {
     // Setup for position,
     async function setupStackForRelativePosition(key, relative_position) {
 
-        if (relative_position < 0n) {
+        if ( relative_position.lt( Int64.ZERO ) ) {
             // Position relative to end,
             await stackLoadToEndOfKey(key);
-            if (relative_position < -1n) {
+            if ( relative_position.lt( Int64.NEG_ONE ) ) {
                 await traverseToAbsolutePosition(
-                        key, ss.absolute_end_position + relative_position + 1n);
+                        key,
+                        ss.absolute_end_position.add( relative_position ).add( Int64.ONE ) );
             }
         }
         else {
             // Position relative to start,
             await stackLoadToStartOfKey(key);
-            if (relative_position > 0) {
+            if ( relative_position.gt( Int64.ZERO ) ) {
                 await traverseToAbsolutePosition(
-                        key, ss.absolute_start_position + relative_position);
+                        key,
+                        ss.absolute_start_position.add( relative_position ) );
             }
         }
 
@@ -1008,13 +1013,13 @@ function TreeStack(store, root_addr) {
 
     // Returns current relative position,
     function getRelativePosition() {
-        if (ss.absolute_start_position === -1n) {
+        if ( ss.absolute_start_position.eq( Int64.NEG_ONE ) ) {
             // Relative from end,
-            return ss.absolute_position - ss.absolute_end_position - 1n;
+            return ss.absolute_position.sub( ss.absolute_end_position ).sub( Int64.ONE );
         }
         else {
             // Relative from start,
-            return ss.absolute_position - ss.absolute_start_position;
+            return ss.absolute_position.sub( ss.absolute_start_position );
         }
     }
 
@@ -1037,10 +1042,10 @@ function TreeStack(store, root_addr) {
 //        console.log("BEFORE:");
 //        dumpStackState(console.log);
 
-        const change_position_amount = BigInt64( size );
+        const change_position_amount = Int64.fromNumber( size );
 
         // If there's no leaf node yet for the desired key,
-        if ( !ss.desired_key.isEqual( ss.loaded_key ) ) {
+        if ( ss.desired_key.neq( ss.loaded_key ) ) {
 
             // This is the case when there's no data currently stored in the
             // tree for the desired_key.
@@ -1088,8 +1093,8 @@ function TreeStack(store, root_addr) {
             }
 
             // Change 'absolute_end_position',
-            if (ss.absolute_end_position >= 0n) {
-                ss.absolute_end_position += change_position_amount;
+            if (ss.absolute_end_position.gte( Int64.ZERO ) ) {
+                ss.absolute_end_position = ss.absolute_end_position.add( change_position_amount );
             }
 
 //            debugDumpStackState(console.log);
@@ -1114,7 +1119,7 @@ function TreeStack(store, root_addr) {
 
         await traverseToAbsolutePosition(
                     ss.desired_key,
-                    ss.absolute_position + change_position_amount);
+                    ss.absolute_position.add( change_position_amount ) );
 
 
         // console.log("AFTER:");
@@ -1223,7 +1228,7 @@ function TreeStack(store, root_addr) {
         let n = 0;
         for (; n < branch_node_data.getSize() - 24; n += 40) {
             const child_addr = branch_node_data.readAddr(n);
-            const child_size = branch_node_data.readBigInt(n + 16);
+            const child_size = branch_node_data.readInt64(n + 16);
             const key = branch_node_data.readAddr(n + 24);
             out += child_addr.asString();
             out += ' ';
@@ -1233,7 +1238,7 @@ function TreeStack(store, root_addr) {
             out += ' ';
         }
         const child_addr = branch_node_data.readAddr(n);
-        const child_size = branch_node_data.readBigInt(n + 16);
+        const child_size = branch_node_data.readInt64(n + 16);
         out += child_addr.asString();
         out += ' ';
         out += child_size;
@@ -1270,20 +1275,20 @@ function TreeStack(store, root_addr) {
             const node_buf = await store.get(addr);
             const size = node_buf.getSize();
 
-            let this_computed_bytesize = 0n;
+            let this_computed_bytesize = Int64.ZERO;
 
             for (let i = 0; i < size; i += 40) {
 
                 const child_addr = node_buf.readAddr(i);
-                const recorded_bytesize = node_buf.readBigInt(i + 16);
+                const recorded_bytesize = node_buf.readInt64(i + 16);
 
                 const checked_child_bytesize = await recurseIntegrityCheck(child_addr);
 
-                if (recorded_bytesize !== checked_child_bytesize) {
+                if (recorded_bytesize.neq( checked_child_bytesize ) ) {
                     throw Error("Integrity failed: branch size does not equal computed size.");
                 }
 
-                this_computed_bytesize += recorded_bytesize;
+                this_computed_bytesize = this_computed_bytesize.add( recorded_bytesize );
 
             }
 
@@ -1293,7 +1298,7 @@ function TreeStack(store, root_addr) {
         else {
 
             const node_buf = await store.get(addr);
-            return BigInt64( node_buf.getSize() );
+            return Int64.fromNumber( node_buf.getSize() );
 
         }
 

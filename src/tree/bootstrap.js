@@ -2,6 +2,7 @@
 
 const { createSparseLeafAddr } = require('../store/addr.js');
 const { KeyStatics } = require('./key.js');
+const Int64 = require('../util/int64.js');
 
 // Creates an empty tree on the given rootchain. Fails if the root chain is
 // not empty.
@@ -9,7 +10,7 @@ const { KeyStatics } = require('./key.js');
 async function createEmpty(store, rootchain) {
 
     // One byte sparse leaf store address,
-    const one_byte_sparse_leaf_addr = createSparseLeafAddr(1n);
+    const one_byte_sparse_leaf_addr = createSparseLeafAddr( Int64.ONE );
 
     // Construct data buffer representing an empty tree.
     // An empty tree is a branch node with 2 virtual sparse leaf nodes of size
@@ -19,13 +20,13 @@ async function createEmpty(store, rootchain) {
     let n = 0;
     empty_root_branch_node_buf.writeAddr( one_byte_sparse_leaf_addr, n );
     n += 16;
-    empty_root_branch_node_buf.writeBigInt( 1n, n );
+    empty_root_branch_node_buf.writeInt64( Int64.ONE, n );
     n += 8;
     empty_root_branch_node_buf.writeValue128( KeyStatics.FAR_LEFT_KEY, n );
     n += 16;
     empty_root_branch_node_buf.writeAddr( one_byte_sparse_leaf_addr, n );
     n += 16;
-    empty_root_branch_node_buf.writeBigInt( 1n, n );
+    empty_root_branch_node_buf.writeInt64( Int64.ONE, n );
     n += 8;
 
     const out_addrs = await store.writeAll([ empty_root_branch_node_buf ]);

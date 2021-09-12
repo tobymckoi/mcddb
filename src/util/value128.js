@@ -1,17 +1,21 @@
 "use strict";
 
+const Int64 = require('./int64.js');
+
 const hashCalculation = require('./murmurhash.js');
 
 // An immutable 128-bit value used to reference data within the tree, both as
 // the key and as reference to an address space.
 // Internally represented as a 16 length byte buffer.
 
-// Key construction can either be by string, Buffer or 2 BigInt values.
+// Key construction can either be by string, Buffer or 2 Int64 values.
 //
 // Examples,
 //   const key_1 = Key('ef00000000000000ae000000000040ae');
 //   const key_2 = Key( Buffer.alloc(16).fill(0x020) );
-//   const key_3 = Key( 0x00f04220321000000n, 0x040aen );
+//   const key_3 = Key(
+//              Int64.fromString( '0f04220321000000', true, 16),
+//              Int64.fromNumber( 0x040ae ) );
 
 
 
@@ -22,13 +26,13 @@ const HASH_SEED = 0x09ae88f;
 // representing the key, or from a buffer itself (preferrably a 16 byte
 // slice of a larger buffer).
 
-function valueToByteBuffer(val, bigint_val2) {
+function valueToByteBuffer(val, val2) {
 
     if (val === undefined) {
         throw Error("Undefined value");
     }
     if (Buffer.isBuffer(val)) {
-        if (bigint_val2 === true) {
+        if (val2 === true) {
             // Unsafe (assume underlying is immutable)
             return val;
         }
@@ -37,18 +41,27 @@ function valueToByteBuffer(val, bigint_val2) {
             return immutableCopy( val, val.length );
         }
     }
+    // Handle Int64 type,
+    else if (Int64.isInt64(val)) {
+        const buf = Buffer.alloc(16);
+        buf.writeUInt32BE( val.getHighBitsUnsigned(), 0 );
+        buf.writeUInt32BE( val.getLowBitsUnsigned(), 4 );
+        buf.writeUInt32BE( val2.getHighBitsUnsigned(), 8 );
+        buf.writeUInt32BE( val2.getLowBitsUnsigned(), 12 );
+        return buf;
+    }
     // Is it a string? If so assume a hex encoded string,
     const valtype = typeof val;
     if (valtype === 'string') {
         return ensureBufferSize( Buffer.from(val, 'hex') );
     }
-    // Handle bigint type
-    else if (valtype === 'bigint') {
-        const buf = Buffer.alloc(16);
-        buf.writeBigInt64BE(val, 0);
-        buf.writeBigInt64BE(bigint_val2, 8);
-        return buf;
-    }
+    // // Handle bigint type
+    // else if (valtype === 'bigint') {
+    //     const buf = Buffer.alloc(16);
+    //     buf.writeBigInt64BE(val, 0);
+    //     buf.writeBigInt64BE(val2, 8);
+    //     return buf;
+    // }
     else {
         throw Error("Unknown type given");
     }
@@ -75,105 +88,6 @@ function immutableCopy(buf, buf_len) {
 
 
 
-
-// // If this is true, use a WeakMap to associate the buffer with each Value128
-// //   export. If this is false, the immutable buffer can be exposed via the
-// //   'isEqual' function.
-//
-// const USE_SECURE_VALUE128 = true;
-//
-// // Links exported object with its buffer in a way we can access the
-// // data privately.
-// let BUFFER_WMAP;
-// if (USE_SECURE_VALUE128) {
-//     BUFFER_WMAP = new WeakMap();
-// }
-//
-// // Value128 class
-//
-// function Old_Value128(val, bigint_val2) {
-//
-//     const value_buffer = valueToByteBuffer(val, bigint_val2);
-//
-//     // Copies the value bytes (length 16) to a buffer at the given offset,
-//     function copyTo(buf, offset) {
-//         value_buffer.copy(buf, offset, 0, 16);
-//     }
-//
-//     // Converts the value to a string.
-//     function asString() {
-//         return value_buffer.toString('hex');
-//     }
-//
-//     // As a Buffer itself (a copy of the internal buffer to maintain
-//     // immutability),
-//     function asBuffer() {
-//         const nbuf = Buffer.alloc(16);
-//         value_buffer.copy(nbuf, 0, 0, 16);
-//         return nbuf;
-//     }
-//
-//     // True if this value is equal to the given value n
-//     function isEqual(n) {
-//         if (USE_SECURE_VALUE128) {
-//             // Safe but uses WeakMap so possibly less memory efficient,
-//             return isBufferEqual( BUFFER_WMAP.get(n) );
-//         }
-//         else {
-//            // INSECURE: 'value_buffer' can get exposed to a user function here.
-//            return n.isBufferEqual(value_buffer);
-//         }
-//     }
-//
-//     // Returns true if the buffer is equal to the given buffer,
-//     function isBufferEqual(buf) {
-//         return value_buffer.equals(buf);
-//     }
-//
-//     // If this is greater than given Value128, returns 1. Returns 0 if equal.
-//     // Returns -1 if this is less than given Value128.
-//     function compareTo(n) {
-//         if (USE_SECURE_VALUE128) {
-//             // Safe but uses WeakMap so possibly less memory efficient,
-//             return compareBufferTo( BUFFER_WMAP.get(n) );
-//         }
-//         else {
-//            // INSECURE: 'value_buffer' can get exposed to a user function here.
-//            return 0 - n.compareBufferTo(value_buffer);
-//         }
-//     }
-//
-//     // If this buffer is greater than given buffer, returns 1. Returns 0 if
-//     // equal. Returns -1 if this is less than given buffer.
-//     function compareBufferTo(buf) {
-//         return value_buffer.compare(buf);
-//     }
-//
-//
-//
-//     const exported = {
-//
-//         copyTo,
-//
-//         isEqual,
-//         isBufferEqual,
-//
-//         compareTo,
-//         compareBufferTo,
-//
-//         asString,
-//         asBuffer,
-//
-//     };
-//     if (USE_SECURE_VALUE128) {
-//         // Reference 'value_buffer' to the exported object via a weak map,
-//         BUFFER_WMAP.set(exported, value_buffer);
-//     }
-//     return exported;
-//
-// }
-
-
 const inspect = Symbol.for('nodejs.util.inspect.custom');
 
 
@@ -185,8 +99,8 @@ class Value128 {
     // Private field,
     #value_buffer;
 
-    constructor(val, bigint_val2) {
-         this.#value_buffer = valueToByteBuffer(val, bigint_val2);
+    constructor(val, val2) {
+         this.#value_buffer = valueToByteBuffer(val, val2);
     }
 
     copyTo(buf, offset) {
@@ -219,6 +133,25 @@ class Value128 {
         throw Error("Out of range");
     }
 
+    eq(n) {
+        return this.isEqual(n) === true;
+    }
+    neq(n) {
+        return this.isEqual(n) === false;
+    }
+    gt(n) {
+        return this.compareTo(n) > 0;
+    }
+    gte(n) {
+        return this.compareTo(n) >= 0;
+    }
+    lt(n) {
+        return this.compareTo(n) < 0;
+    }
+    lte(n) {
+        return this.compareTo(n) <= 0;
+    }
+
     isEqual(n) {
         return this.#value_buffer.equals(n.#value_buffer);
     }
@@ -244,6 +177,6 @@ class Value128 {
 
 // Export class create function,
 
-module.exports = (val, bigint_val2) => {
-    return new Value128(val, bigint_val2);
+module.exports = (val, val2) => {
+    return new Value128(val, val2);
 };

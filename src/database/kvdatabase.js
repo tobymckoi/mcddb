@@ -11,7 +11,8 @@
 const { Addr } = require('../store/addr.js');
 const TreeStack = require('../tree/treestack.js');
 
-const { AsyncValue, BigInt64 } = require('../util/general.js');
+const { AsyncValue } = require('../util/general.js');
+const Int64 = require('../util/int64.js');
 
 // // Symbol for protected access to functions here,
 // const PROTECTED_ACCESS = Symbol('KVDatabase Protected');
@@ -26,7 +27,7 @@ function DataValue(key, performAsyncTreeStackOp) {
 
     // Relative position. Negative value is position relative to the end + 1.
     // Positive value is position relative to the start.
-    let relative_position = -1n;
+    let relative_position = Int64.NEG_ONE;
 
     function getKey() {
         return key;
@@ -270,7 +271,7 @@ function TX(store, rootchain) {
             const inmemory_addrs = tree_stack.getAllInMemoryAddresses();
             tree_stack.invalidate();
 
-            if ( prev_root_addr.isEqual(new_root_addr) ||
+            if ( prev_root_addr.eq( new_root_addr ) ||
                  inmemory_addrs.length === 0 ) {
                 // No changes to commit, so just return,
                 return;
@@ -287,7 +288,7 @@ function TX(store, rootchain) {
             let new_root_store_addr;
             for (let i = 0; i < inmemory_addrs.length; ++i) {
                 const mem_addr = inmemory_addrs[i];
-                if ( mem_addr.isEqual(new_root_addr) === true ) {
+                if ( mem_addr.eq( new_root_addr ) ) {
                     new_root_store_addr = out_addr_set[i];
                     break;
                 }

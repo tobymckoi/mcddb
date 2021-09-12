@@ -22,7 +22,7 @@ function HeapRootChain() {
         if (len > 0) {
             // Assert last entry is supersede_addr,
             const cur_top = heap_root_chain[heap_root_chain.length - 1];
-            if (!cur_top.addr.isEqual(supersede_addr)) {
+            if ( cur_top.addr.neq( supersede_addr ) ) {
                 throw CommitError(
                     "supersede_addr does not match expected (concurrent write to root chain)"
                 );

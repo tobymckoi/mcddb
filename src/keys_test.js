@@ -55,9 +55,9 @@ function run() {
 
     console.log("---");
 
-    console.log( key1.isEqual(key1) );
-    console.log( key1.isEqual(key2) );
-    console.log( key1.isEqual(key3) );
+    console.log( key1.eq(key1) );
+    console.log( key1.eq(key2) );
+    console.log( key1.eq(key3) );
 
 
     console.log( key1.compareTo(key1) );
@@ -112,7 +112,7 @@ function run() {
     //         console.log("OOPS, Exposed: " + buf);
     //     }
     // };
-    // console.log( key1.isEqual(EVILCODE) );
+    // console.log( key1.eq( EVILCODE ) );
 
 
 

@@ -3,8 +3,10 @@
 const Long = require('long');
 
 
-
 const Int64 = Long;
+
+const inspect = Symbol.for('nodejs.util.inspect.custom');
+
 
 function isInt64(val) {
     return Long.isLong(val);
@@ -16,6 +18,11 @@ function fromHighLowUInt(high, low) {
     return new Int64( low, high, true );
 }
 Int64.fromHighLowUInt = fromHighLowUInt;
+
+// Display the Int64
+Int64.prototype[inspect] = function() {
+    return this.toString() + '#';
+};
 
 
 

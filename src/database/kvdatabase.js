@@ -35,24 +35,25 @@ function DataValue(key, performAsyncTreeStackOp) {
 
     // Set the position of the cursor over the data value,
     function setPosition(position) {
-        // Assert bigint,
-        if (typeof position !== 'bigint') {
-            throw Error("Expecting BigInt");
+        // Assert Int64,
+        if (Int64.isInt64( position ) !== true) {
+            throw Error("Expecting Int64");
         }
         throw Error("PENDING");
     }
 
-    // Returns the position (bigint type)
+    // Returns the position (Int64 type) relative to the start of the data.
+    // Note that this can be an expensive operation.
     function getPosition() {
         throw Error("PENDING");
     }
 
     function start() {
-        throw Error("PENDING");
+        relative_position = Int64.ZERO;
     }
 
     function end() {
-        throw Error("PENDING");
+        relative_position = Int64.NEG_ONE;
     }
 
     function getSize() {
@@ -113,7 +114,8 @@ function DataValue(key, performAsyncTreeStackOp) {
 
     // Writes a string to the data value. Note that the string encoding may
     // write more bytes than the number of characters in the string. This does
-    // NOT zero terminate the string.
+    // NOT zero terminate the string, and will never write a ZERO character for
+    // utf8 encoding.
     /* async */ function writeString(str, encoding) {
         return stackProgressOperation( (tree_stack) => {
             return tree_stack.writeString( str, encoding );
@@ -231,7 +233,7 @@ function TX(store, rootchain) {
     async function performAsyncTreeStackOp( callFunction ) {
 
         const tree_stack = await getTreeStack();
-        tree_stack.lock();
+        await tree_stack.lock();
 
         try {
 
@@ -241,7 +243,7 @@ function TX(store, rootchain) {
 
         }
         finally {
-            tree_stack.unlock();
+            await tree_stack.unlock();
         }
 
     }
@@ -262,7 +264,8 @@ function TX(store, rootchain) {
 
         // Lock the stack to ensure async mutation of the stack state is not
         // possible.
-        tree_stack.lock();
+        await tree_stack.lock();
+
         try {
 
             const prev_root_addr = tree_stack.getOriginatingRootAddr();
@@ -304,7 +307,7 @@ function TX(store, rootchain) {
 
         }
         finally {
-            tree_stack.unlock();
+            await tree_stack.unlock();
         }
 
     }

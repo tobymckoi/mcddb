@@ -181,6 +181,7 @@ async function insertTestData(db, test_data) {
             const key = Key( KEY_HIGH_INT64, Int64.fromNumber( keyv ) );
             const data = tx.getDataValue(key);
 
+            data.setPosition( Int64.fromNumber( 0 ) );
             await data.writeString(key_data);
 
         }
@@ -217,11 +218,22 @@ async function checkTestData(db, test_data) {
             const key = Key( KEY_HIGH_INT64, Int64.fromNumber( keyv ) );
             const data = tx.getDataValue(key);
 
+            // Position on start of data value,
+            data.start();
+//            data.setPosition( Int64.fromNumber( -(1 + 8192 + 8192 + 3159 + 0) ) );
             const read_key_data = await data.readString();
 
             if (key_data !== read_key_data) {
+                console.error({
+                    key_data,
+                    read_key_data,
+                    key_data_length: key_data.length,
+                    read_key_data_length: read_key_data.length,
+                    key
+                });
                 throw Error("Data check failed!");
             }
+            console.log("CHECK PASSED FOR: ", key);
 
         }
 
@@ -271,13 +283,8 @@ async function run2() {
     const test_data = createTestData();
 
     await insertTestData(db, test_data);
-
-//    await checkTestData(db, test_data);
-
-
-
-
     await dumpTXInfo(db);
+    await checkTestData(db, test_data);
 
 
 }

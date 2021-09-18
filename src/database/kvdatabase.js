@@ -33,13 +33,15 @@ function DataValue(key, performAsyncTreeStackOp) {
         return key;
     }
 
-    // Set the position of the cursor over the data value,
+    // Set the position of the cursor over the data value. Setting a positive
+    // value sets position relative to the start of the data. Setting a
+    // negative value sets position relative to the end of the data.
     function setPosition(position) {
         // Assert Int64,
         if (Int64.isInt64( position ) !== true) {
             throw Error("Expecting Int64");
         }
-        throw Error("PENDING");
+        relative_position = position;
     }
 
     // Returns the position (Int64 type) relative to the start of the data.
@@ -108,7 +110,7 @@ function DataValue(key, performAsyncTreeStackOp) {
     // characters consumed reaches 'length', c) End of data is reached.
     /* async */ function readString(length, encoding) {
         return stackProgressOperation( (tree_stack) => {
-            return tree_stack.readString( encoding );
+            return tree_stack.readString( length, encoding );
         });
     }
 
@@ -146,11 +148,11 @@ function DataValue(key, performAsyncTreeStackOp) {
 
         getKey,
 
-        setPosition,     // async
-        getPosition,     // async
+        setPosition,
+        start,
+        end,
 
-        start,           // async
-        end,             // async
+        getPosition,     // async
         getSize,         // async
 
         readUInt8,       // async

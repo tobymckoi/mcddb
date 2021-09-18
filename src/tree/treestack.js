@@ -9,6 +9,10 @@ const { isBranchNodeAddr,
 
 const Int64 = require('../util/int64.js');
 
+const { calculateUTF8CodePointSize,
+        readUTF8StringFromBuffer,
+      } = require('../util/general.js');
+
 
 // Get KeyStatics for far left and right key,
 const { FAR_LEFT_KEY, FAR_RIGHT_KEY } = KeyStatics;
@@ -21,6 +25,9 @@ const LEAF = false;
 const BRANCH = true;
 
 const DEFAULT_STRING_ENCODING = 'utf8';
+
+// This is about 256MB which is V8 limit,
+const MAX_READ_STRING_LENGTH = (1 << 28) - 16;
 
 
 
@@ -71,6 +78,25 @@ function StackState() {
         data.absolute_end_position = Int64.NEG_ONE;
     }
 
+    function copyFrom(in_stack) {
+
+        clear();
+
+        const len = in_stack.getSize();
+        for (let i = 0; i < len; ++i) {
+            const se = in_stack.getEntry(i);
+            pushToStack( i, se.addr_offset,
+                         se.down_addr, se.down_size, se.left_offset,
+                         se.left_key, se.right_key );
+        }
+        data.desired_key = in_stack.desired_key;
+        data.loaded_key = in_stack.loaded_key;
+        data.absolute_position = in_stack.absolute_position;
+        data.absolute_start_position = in_stack.absolute_start_position;
+        data.absolute_end_position = in_stack.absolute_end_position;
+
+    }
+
     function asString() {
         return {
             stack,
@@ -104,6 +130,7 @@ function StackState() {
         getSize,
         invalidate,
 
+        copyFrom,
         asString,
 
     };
@@ -146,7 +173,9 @@ function TreeStack(store, root_addr) {
         return Error(msg);
     }
 
-
+    function positionOutOfBoundsError() {
+        return OutOfBoundsError("Position out of bounds");
+    }
 
 
 
@@ -154,6 +183,17 @@ function TreeStack(store, root_addr) {
     //     // ( key >= left_key && key < right_key )
     //     return key.compareTo(left_key) >= 0 && key.compareTo(right_key) < 0;
     // }
+
+
+    // Fetch node within the context of the current lock. The implication
+    // being that an 'unlock' might flush nodes out to the storage medium if
+    // there is pressure on local memory.
+
+    /* async */ function fetchNode(addr) {
+        return store.get(addr);
+    }
+
+
 
 
 
@@ -164,7 +204,7 @@ function TreeStack(store, root_addr) {
                 left_offset, outer_left_key, outer_right_key ) {
 
         // Get the node data,
-        const node_data = await store.get(branch_addr);
+        const node_data = await fetchNode(branch_addr);
         const size = node_data.getSize();
 
         // Get first reference,
@@ -221,7 +261,7 @@ function TreeStack(store, root_addr) {
                 outer_left_offset, outer_left_key, outer_right_key ) {
 
         // Get the node data,
-        const node_data = await store.get(branch_addr);
+        const node_data = await fetchNode(branch_addr);
         const size = node_data.getSize();
 
         // Compute absolute byte size of all children,
@@ -291,50 +331,7 @@ function TreeStack(store, root_addr) {
 
 
 
-    async function loadAbsolutePosition(
-                absolute_pos, branch_addr, stack_level,
-                outer_left_offset, outer_left_key, outer_right_key ) {
 
-        // Get the node data,
-        const node_data = await store.get(branch_addr);
-        const size = node_data.getSize();
-
-        // Iterate over children and compute absolute byte position,
-        let left_offset = outer_left_offset;
-
-        let offset = 0;
-        for (; offset < size - 24; offset += 40) {
-            const down_size = node_data.readInt64(offset + 16);
-            const right_offset = left_offset.add( down_size );
-            if ( absolute_pos.lt( right_offset ) ) {
-                break;
-            }
-            left_offset = left_offset.add( down_size );
-        }
-
-        let left_key, right_key;
-
-        if (offset === 0) {
-            left_key = outer_left_key;
-        }
-        else {
-            left_key = node_data.readValue128(offset - 16);
-        }
-
-        if (offset + 24 >= size) {
-            right_key = outer_right_key;
-        }
-        else {
-            right_key = node_data.readValue128(offset + 24);
-        }
-
-        const down_addr = node_data.readAddr(offset);
-        const down_size = node_data.readInt64(offset + 16);
-
-        ss.pushToStack(stack_level, offset, down_addr, down_size, left_offset, left_key, right_key);
-        return down_addr;
-
-    }
 
 
 
@@ -542,11 +539,55 @@ function TreeStack(store, root_addr) {
 
 
 
+    function loadAbsolutePosition(
+                stack,
+                absolute_pos, node_data, stack_level,
+                outer_left_offset, outer_left_key, outer_right_key ) {
 
-    // Traverse forward by the given amount of bytes, updating the stack and
+        const size = node_data.getSize();
+
+        // Iterate over children and compute absolute byte position,
+        let left_offset = outer_left_offset;
+
+        let offset = 0;
+        for (; offset < size - 24; offset += 40) {
+            const down_size = node_data.readInt64(offset + 16);
+            const right_offset = left_offset.add( down_size );
+            if ( absolute_pos.lt( right_offset ) ) {
+                break;
+            }
+            left_offset = left_offset.add( down_size );
+        }
+
+        let left_key, right_key;
+
+        if (offset === 0) {
+            left_key = outer_left_key;
+        }
+        else {
+            left_key = node_data.readValue128(offset - 16);
+        }
+
+        if (offset + 24 >= size) {
+            right_key = outer_right_key;
+        }
+        else {
+            right_key = node_data.readValue128(offset + 24);
+        }
+
+        const down_addr = node_data.readAddr(offset);
+        const down_size = node_data.readInt64(offset + 16);
+
+        stack.pushToStack(stack_level, offset, down_addr, down_size, left_offset, left_key, right_key);
+        return down_addr;
+
+    }
+
+
+    // Traverse forward to the given absolute position, updating the stack and
     // internal absolute state variables as appropriate.
 
-    async function traverseToAbsolutePosition(key, absolute_pos) {
+    async function traverseToAbsolutePosition(stack, key, absolute_pos) {
 
         // console.log("Key: ", key, " Traverse To: ", absolute_pos);
         // console.log("BEFORE:");
@@ -554,7 +595,7 @@ function TreeStack(store, root_addr) {
 
         // Handle the simple case of simply moving within the current node.
 
-        const entry = ss.lastStackEntry();
+        const entry = stack.lastStackEntry();
         const node_left_absolute_pos = entry.left_offset;
         const node_right_absolute_pos = node_left_absolute_pos.add( entry.down_size );
 
@@ -563,7 +604,7 @@ function TreeStack(store, root_addr) {
              absolute_pos.gte( node_right_absolute_pos ) ) {
 
             // Default is the full range,
-            let stack_level = ss.getSize() - 1;
+            let stack_level = stack.getSize() - 1;
             // let branch_left_absolute_position = Int64.ZERO;
             // let branch_right_absolute_position = Int64.NEG_ONE;
 
@@ -573,8 +614,8 @@ function TreeStack(store, root_addr) {
 
                 for ( ; stack_level > 1; --stack_level ) {
 
-                    // const entry = ss.getEntry( stack_level );
-                    const entry_back_one = ss.getEntry( stack_level - 1 );
+                    // const entry = stack.getEntry( stack_level );
+                    const entry_back_one = stack.getEntry( stack_level - 1 );
 
                     const calc_branch_left_absolute_position =
                                 entry_back_one.left_offset;
@@ -597,22 +638,26 @@ function TreeStack(store, root_addr) {
             }
 
             // Clear all stack entries after this stack level,
-            ss.clearEntriesAfter(stack_level);
+            stack.clearEntriesAfter(stack_level);
 
-            let branch_addr = ss.getEntry( stack_level - 1 ).down_addr;
+            let branch_addr = stack.getEntry( stack_level - 1 ).down_addr;
 
             // Fill out the stack until we hit a leaf node address,
             while ( isBranchNodeAddr( branch_addr ) ) {
 
-                const prev_stack_entry = ss.getEntry( stack_level - 1 );
+                const prev_stack_entry = stack.getEntry( stack_level - 1 );
 
                 const left_offset = prev_stack_entry.left_offset;
                 const left_key = prev_stack_entry.left_key;
                 const right_key = prev_stack_entry.right_key;
 
+                // Get the node data,
+                const node_data = await fetchNode(branch_addr);
+
                 // Load next level of stack,
-                branch_addr = await loadAbsolutePosition(
-                            absolute_pos, branch_addr, stack_level,
+                branch_addr = loadAbsolutePosition(
+                            stack,
+                            absolute_pos, node_data, stack_level,
                             left_offset, left_key, right_key );
 
                 // Next stack level,
@@ -621,7 +666,7 @@ function TreeStack(store, root_addr) {
             }
 
             // Get info about the leaf node we landed on,
-            const last_entry = ss.lastStackEntry();
+            const last_entry = stack.lastStackEntry();
 
             // Did we land on a boundary and is the left key the same as
             // the key we are searching?
@@ -633,19 +678,19 @@ function TreeStack(store, root_addr) {
                  key.neq( last_entry.right_key ) &&
                  key.eq( last_entry.left_key ) ) {
 
-                ss.loaded_key = key;
+                stack.loaded_key = key;
 
             }
             else {
 
-                ss.loaded_key = last_entry.right_key;
+                stack.loaded_key = last_entry.right_key;
 
             }
 
         }
 
         // Update the absolute position pointer,
-        ss.absolute_position = absolute_pos;
+        stack.absolute_position = absolute_pos;
 
         // console.log("AFTER:");
         // debugDumpStackState(console.log);
@@ -706,7 +751,7 @@ function TreeStack(store, root_addr) {
         for (let se = stack_level; se >= 1; --se) {
             const sentry = ss.getEntry(se);
             sentry.down_size = sentry.down_size.add( size );
-            const branch_buf = await store.get( ss.getEntry(se - 1).down_addr );
+            const branch_buf = await fetchNode( ss.getEntry(se - 1).down_addr );
             branch_buf.writeInt64( sentry.down_size, sentry.addr_offset + 16 );
         }
 
@@ -747,7 +792,7 @@ function TreeStack(store, root_addr) {
         const current_se = ss.getEntry( stack_level );
 
         const branch_addr = previous_se.down_addr;
-        const branch_buffer = await store.get( branch_addr );
+        const branch_buffer = await fetchNode( branch_addr );
 
         // Where to insert,
         const offset = current_se.addr_offset;
@@ -764,7 +809,8 @@ function TreeStack(store, root_addr) {
 
             const right_branch_buffer = store.createEmptyDataBuffer( BRANCH );
 
-            let midpoint_offset = ( ( ( MAX_BRANCH_CHILDREN / 2 ) | 0 ) * 40 );
+            // Half point,
+            let midpoint_offset = ( ( MAX_BRANCH_CHILDREN >> 1 ) * 40 );
             // If midpoint is the same as insert point, move midpoint to next
             // child address,
             if ( midpoint_offset === offset ) {
@@ -937,7 +983,7 @@ function TreeStack(store, root_addr) {
 
             if ( store.canConvertToBuffer(next_addr) ) {
                 im_data = store.convertSpanToBuffer(
-                                            await store.get( next_addr ) );
+                                            await fetchNode( next_addr ) );
                 const new_addr = im_data.getAddr();
                 const stack_back_one = ss.getEntry( i - 1 );
                 stack_back_one.down_addr = new_addr;
@@ -950,7 +996,7 @@ function TreeStack(store, root_addr) {
                 }
             }
             else {
-                im_data = await store.get( next_addr );
+                im_data = await fetchNode( next_addr );
             }
 
             // Go to next,
@@ -973,10 +1019,10 @@ function TreeStack(store, root_addr) {
         if ( store.canConvertToBuffer(leaf_addr) ) {
 
             const stack_back_two = ss.getEntry( ss.getSize() - 2 );
-            const last_im_data = await store.get( stack_back_two.down_addr );
+            const last_im_data = await fetchNode( stack_back_two.down_addr );
 
             const im_data = store.convertSpanToBuffer(
-                                            await store.get(leaf_addr) );
+                                            await fetchNode(leaf_addr) );
             const new_addr = im_data.getAddr();
             const stack_back_one = ss.lastStackEntry();
             stack_back_one.down_addr = new_addr;
@@ -990,12 +1036,14 @@ function TreeStack(store, root_addr) {
     // Setup for position,
     async function setupStackForRelativePosition(key, relative_position) {
 
+        // If given relative position is negative. Position the cursor relative
+        // to the end of the key.
         if ( relative_position.lt( Int64.ZERO ) ) {
             // Position relative to end,
             await stackLoadToEndOfKey(key);
             if ( relative_position.lt( Int64.NEG_ONE ) ) {
                 await traverseToAbsolutePosition(
-                        key,
+                        ss, key,
                         ss.absolute_end_position.add( relative_position ).add( Int64.ONE ) );
             }
         }
@@ -1004,7 +1052,7 @@ function TreeStack(store, root_addr) {
             await stackLoadToStartOfKey(key);
             if ( relative_position.gt( Int64.ZERO ) ) {
                 await traverseToAbsolutePosition(
-                        key,
+                        ss, key,
                         ss.absolute_start_position.add( relative_position ) );
             }
         }
@@ -1025,12 +1073,143 @@ function TreeStack(store, root_addr) {
 
 
 
+    async function appendNodesForBuffer(
+                buf, offset, size, max_node_size, change_position_amount) {
+
+        const leaf_buf_set = [];
+
+        // Calculate the number of new nodes we will need to create to
+        // store the given amount of data.
+        let node_count = ( ( size - 1 ) / max_node_size ) + 1;
+        // Sanity check,
+        if ( node_count > (2 ** 30) ) {
+            throw Error("Append node allocation count exceeded limit");
+        }
+        node_count |= 0;
+
+        let noff = offset;
+        let nsize = size;
+
+        for ( let i = 0; i < node_count; ++i ) {
+
+            // Create a leaf node,
+            const new_leaf_node_buf = store.createEmptyDataBuffer( LEAF );
+
+            // Write into the buffer,
+            const nl_size = Math.min( max_node_size, nsize );
+            new_leaf_node_buf.copyFromBuffer( buf, noff, nl_size, 0 );
+
+            // Progress the offset through the original data,
+            noff += max_node_size;
+            nsize -= max_node_size;
+
+            leaf_buf_set.push(new_leaf_node_buf);
+
+        }
+
+        // Insert leaf node(s) in reverse order,
+        for ( let i = leaf_buf_set.length - 1; i >= 0; --i ) {
+            // Insert node into tree,
+            const new_leaf_node_buf = leaf_buf_set[i];
+            await insertLeafNodeToTree(
+                        ss.desired_key, ss.absolute_start_position,
+                        new_leaf_node_buf);
+        }
+
+        // Change 'absolute_end_position',
+        if (ss.absolute_end_position.gte( Int64.ZERO ) ) {
+            ss.absolute_end_position = ss.absolute_end_position.add( change_position_amount );
+        }
+
+    }
+
+
+    // Reads a chunk of bytes from the current cursor into the given buffer.
+    // The function will read an amount of bytes equal to, either: 1) The
+    // end of the current leaf node if bytes left >= 'min_size', 2) Up until
+    // 'max_size', 3) Up until the end of the data stored for the key.
+    // Returns the number of bytes actually written into the buffer,
+    async function readChunkToBuffer(buf, offset, min_size, max_size) {
+
+        // Assert stack loaded,
+        if ( ss.getSize() === 0 ) {
+            throw Error("Stack not populated");
+        }
+
+        // Sanity checks,
+        if ( min_size > max_size ) {
+            throw Error("min_size > max_size");
+        }
+        if ( max_size > ( buf.length - offset ) ) {
+            throw Error("max_size greater than buffer size");
+        }
+
+        // If the cursor didn't land on the key,
+        if ( ss.desired_key.neq( ss.loaded_key ) ) {
+            throw positionOutOfBoundsError();
+        }
+
+        let total_read_count = 0;
+
+        do {
+
+            const se = ss.lastStackEntry();
+
+            // If we reached the end,
+            if ( se.right_key.neq( ss.desired_key ) ) {
+                // Break the loop and return,
+                break;
+            }
+
+            // The position in the leaf of the cursor,
+            const int64_pos_in_leaf = ss.absolute_position.sub( se.left_offset );
+            let pos_in_leaf = int64_pos_in_leaf.toInt();
+            // The number of bytes left until the end of the current leaf node,
+            let byte_to_leaf_end = se.down_size.sub( int64_pos_in_leaf ).toInt();
+
+            // The amount to read,
+            const read_count = Math.min( max_size, byte_to_leaf_end );
+            // Assert read_count is always positive number,
+            if ( read_count <= 0 ) {
+                throw Error("read_count <= 0");
+            }
+
+            // Fetch the leaf node data,
+            const leaf_node_buf = await fetchNode( se.down_addr );
+
+            // How much data to read from the current leaf,
+            leaf_node_buf.copyToBuffer( buf, offset, read_count, pos_in_leaf );
+
+            // Update offset, total_read_count, and max_size,
+            offset += read_count;
+            total_read_count += read_count;
+            max_size -= read_count;
+
+            if (total_read_count < min_size) {
+                // Traverse to the next leaf, but only if we haven't read enough
+                // bytes satisfy the minimum.
+                await traverseToAbsolutePosition(
+                        ss, ss.desired_key,
+                        ss.absolute_position.add(
+                                Int64.fromNumber( read_count ) ) );
+            }
+
+        } while (total_read_count < min_size);
+
+        // Return the number of bytes read,
+        return total_read_count;
+
+    }
+
+
+
+
     // Reads data from the buffer and writes out to the key value at the
     // current position.
     async function copyFromBuffer(buf, offset, size) {
 
         // Assert stack loaded,
-        if (ss.getSize() === 0) {
+        if ( ss.getSize() === 0 ) {
             throw Error("Stack not populated");
         }
 
@@ -1039,116 +1218,282 @@ function TreeStack(store, root_addr) {
             throw Error("size to copy greater than buffer size");
         }
 
-//        console.log("BEFORE:");
-//        dumpStackState(console.log);
-
+        const max_node_size = store.getNodeDataByteSizeLimit();
         const change_position_amount = Int64.fromNumber( size );
 
-        // If there's no leaf node yet for the desired key,
+        // If the cursor didn't land on the key,
         if ( ss.desired_key.neq( ss.loaded_key ) ) {
 
-            // This is the case when there's no data currently stored in the
-            // tree for the desired_key.
+            // Either we have to create a leaf(s) for the key, or raise an
+            // error because the position is out of range,
 
-            // There's no existing leaf data to copy the data into, so create
-            // leaf node(s) and insert into tree.
+            // In the case of key not being present and relative position being
+            // in range, the positions should all be the same and positive,
+
+            if ( ss.absolute_start_position.lt( Int64.ZERO ) ||
+                 ss.absolute_end_position.lt( Int64.ZERO ) ||
+                 ss.absolute_position.neq( ss.absolute_start_position ) ||
+                 ss.absolute_position.neq( ss.absolute_end_position ) ) {
+
+                debugDumpStackState(console.error);
+                throw positionOutOfBoundsError();
+
+            }
+
+            // This is the case when there's no leaf data currently stored in
+            // the tree for the desired_key. So we must create the leaf nodes
+            // containing the input buf and insert them into the tree.
 
             // Insert key,
             await ensureMutableStack();
 
-            const leaf_buf_set = [];
-
-            // Calculate the number of new nodes we will need to create to
-            // store the given amount of data.
-            const max_node_size = store.getNodeDataByteSizeLimit();
-            const node_count = ( ( ( size - 1 ) / max_node_size ) | 0 ) + 1;
-
-            let noff = offset;
-            let nsize = size;
-
-            for ( let i = 0; i < node_count; ++i ) {
-
-                // Create a leaf node,
-                const new_leaf_node_buf = store.createEmptyDataBuffer( LEAF );
-
-                // Write into the buffer,
-                const nl_size = Math.min( max_node_size, nsize );
-                new_leaf_node_buf.copyFromBuffer( buf, noff, nl_size, 0 );
-
-                // Progress the offset through the original data,
-                noff += max_node_size;
-                nsize -= max_node_size;
-
-                leaf_buf_set.push(new_leaf_node_buf);
-
-            }
-
-            // Insert leaf node(s) in reverse order,
-            for ( let i = leaf_buf_set.length - 1; i >= 0; --i ) {
-                // Insert node into tree,
-                const new_leaf_node_buf = leaf_buf_set[i];
-                await insertLeafNodeToTree(
-                            ss.desired_key, ss.absolute_start_position,
-                            new_leaf_node_buf);
-            }
-
-            // Change 'absolute_end_position',
-            if (ss.absolute_end_position.gte( Int64.ZERO ) ) {
-                ss.absolute_end_position = ss.absolute_end_position.add( change_position_amount );
-            }
-
-//            debugDumpStackState(console.log);
+            // Append leaf nodes at the current cursor as specified by the
+            // main stack.
+            await appendNodesForBuffer(
+                        buf, offset, size,
+                        max_node_size, change_position_amount );
 
         }
+
+        // So we know there's existing data for the given key.
+        // Are we appending data to the end of the node?
+        else if ( ss.lastStackEntry().right_key.neq( ss.desired_key ) ) {
+
+            // Yes, get the left leaf and see if we add anything to it,
+            const sc = StackState();
+            // Populate from the main stack,
+            sc.copyFrom( ss );
+            // Traverse to the previous leaf on the new stack,
+            await traverseToAbsolutePosition(
+                        sc, sc.desired_key,
+                        sc.absolute_position.sub( Int64.ONE ));
+
+            // Is it possible to add anything to this leaf?
+            const cur_leaf_size = sc.lastStackEntry().down_size;
+
+            // Is it worth adding to the leaf?
+            const worth_adding_to_leaf = (
+                    cur_leaf_size + size <= max_node_size ||
+                    cur_leaf_size < ( ( max_node_size * 0.80 ) | 0 ) );
+
+            if ( worth_adding_to_leaf ) {
+
+//                console.log("Will add to end of leaf!");
+
+                // Make 'sc' the main stack,
+                ss.copyFrom( sc );
+
+                // Ensure the stack and leaf are mutable,
+                await ensureMutableStackAndLeaf();
+
+                throw Error("PENDING: Append to existing.");
+
+            }
+            else {
+
+                // Not worth adding to the last leaf node, so just append nodes
+                // to the end of the node chain.
+
+//                console.log("Can not add to leaf :(");
+
+                // Insert key,
+                await ensureMutableStack();
+
+                // Append leaf nodes at the current cursor as specified by the
+                // main stack.
+                await appendNodesForBuffer(
+                            buf, offset, size,
+                            max_node_size, change_position_amount );
+
+            }
+
+//                console.log("At END!");
+
+//                debugDumpStackState( console.log, sc );
+
+
+        }
+        // Not adding data to the end of the leaf set, so determine how much
+        // data we are overwriting of the current leaf nodes and how many
+        // more nodes we have to add,
         else {
 
-            // Found the key, so we need to copy the data from the buffer into
-            // the existing leaf node.
-
-            // Ensure the stack and leaf are mutable,
-            await ensureMutableStackAndLeaf();
-
-            //
-
-            throw Error("PENDING: Write to existing.");
-
+            throw Error("PENDING: Overwrite existing (at least partially).");
 
         }
 
         // Move forward position by the size we wrote,
 
         await traverseToAbsolutePosition(
-                    ss.desired_key,
+                    ss, ss.desired_key,
                     ss.absolute_position.add( change_position_amount ) );
-
-
-        // console.log("AFTER:");
-        // debugDumpStackState(console.log);
-        //
-        // await debugDumpTreeBranches(console.log);
 
     }
 
 
+
+
     // Writes a string at the given position,
 
-    /* async */ function writeString(str, encoding) {
+    async function writeString(str, encoding) {
 
         if (encoding === undefined) {
             encoding = DEFAULT_STRING_ENCODING;
         }
 
-        // Write the string to a Buffer,
-        const buf = Buffer.from(str, encoding);
+        // Create a Buffer, decode the string into the buffer. Large strings
+        // are piped through a fixed size buffer.
 
-        // Write the buffer,
-        return copyFromBuffer(buf, 0, buf.length);
+        if (encoding === 'utf8') {
+
+            const chunk_bytesize_limit = store.getNodeDataByteSizeLimit();
+            let cp_offset = 0;
+            let terminated = false;
+
+            // Pipe the string through this buffer,
+            const buf = Buffer.alloc( chunk_bytesize_limit );
+
+            while (cp_offset < str.length && terminated === false) {
+
+                const str_part = str.substring( cp_offset );
+                const v = calculateUTF8CodePointSize( str_part, chunk_bytesize_limit );
+                const cp_size = v.i;
+                const bytesize = v.bytesize;
+                terminated = v.zero_terminated;
+                cp_offset += cp_size;
+
+                if ( bytesize > 0 ) {
+
+                    // Write the string section to the buffer,
+                    const act_bytesize = buf.write(
+                            str_part.substring( 0, cp_size ), 0, bytesize, 'utf8' );
+
+                    // Assert,
+                    if (act_bytesize !== bytesize) {
+                        throw Error("UTF8 encoding error. Encoded byte size != calculated");
+                    }
+
+                    // Write this section of the encoded string.
+                    // Note that 'buf' can not be greater in size than some
+                    // specified maximum size for the writethrough buffer.
+                    await copyFromBuffer( buf, 0, bytesize );
+
+                }
+
+            }
+
+        }
+        else {
+            throw Error("Unsupported encoding");
+        }
 
     }
 
+    // Reads a string up to the given length (in utf16 codepoints). Moves the
+    // pointer forward by the number of bytes read. Note that the length of
+    // the returned string does not always correspond with the number of bytes
+    // the cursor moved forward through this operation because of the UTF
+    // encoding method.
+    //
+    // If a zero byte is reached, or the end of the data is reached, returns
+    // the string up until that point. Will not return partially decoded UTF.
+    // This means, this function will return either with the cursor at the end
+    // of the data, or at a zero byte, or at the end of the last fully encoded
+    // codepoint, or at the codepoint after 'length' codepoints have been read.
+    //
+    // If no length given, reads a string up to the maximum string size of
+    // (1 << 28) - 16 which is about 256MB.
+
     async function readString(length, encoding) {
 
-        throw Error("PENDING: readString");
+        // If 'readString(encoding)'
+        if (typeof length === 'string') {
+            encoding = length;
+            length = MAX_READ_STRING_LENGTH;
+        }
+        // If 'readString()'
+        else if (length === undefined) {
+            length = MAX_READ_STRING_LENGTH;
+        }
+
+        if (encoding === undefined) {
+            encoding = DEFAULT_STRING_ENCODING;
+        }
+
+//        debugDumpStackState( console.log );
+
+        if ( ss.desired_key.neq( ss.loaded_key ) ) {
+            throw new Error("Position out of range");
+        }
+
+        if (encoding === 'utf8') {
+
+            let out_str = '';
+            let remaining_length = length;
+
+            const MIN_READ_SIZE = 16;
+            const MAX_READ_BUF_SIZE = 4096;
+
+            // The buffer to pipe all string reads through,
+            const read_buf = Buffer.alloc( MAX_READ_BUF_SIZE );
+
+            let end_reached = false;
+            while (end_reached === false) {
+
+                const last_abs_position = ss.absolute_position;
+
+                // Reads a chunk of data into the buffer using a minimum amount
+                // node store requests.
+                const bytes_read = await readChunkToBuffer( read_buf, 0,
+                                            MIN_READ_SIZE, MAX_READ_BUF_SIZE );
+
+                // If we read bytes,
+                if (bytes_read > 0) {
+
+                    // Decode UTF8 string from buffer data,
+                    const v = readUTF8StringFromBuffer(
+                                read_buf, 0, bytes_read, remaining_length );
+
+                    // Returns:
+                    //  v.str_part : The string consumed from buffer.
+                    //  v.bytesize : Number of bytes in buffer consumed.
+                    //  v.zero_terminated : True if 0x0 terminator reached.
+
+                    remaining_length -= v.str_part.length;
+
+                    // Position cursor to the end of the consumed string,
+                    await traverseToAbsolutePosition(
+                            ss, ss.desired_key,
+                            last_abs_position.add(
+                                    Int64.fromNumber( v.bytesize ) ) );
+
+                    // Append string part,
+                    out_str += v.str_part;
+
+                    // Loop terminating conditions,
+                    end_reached = remaining_length <= 0 ||
+                                  v.zero_terminated === true ||
+                                  v.bytesize === 0;
+
+                }
+
+                // If no bytes read, then the string is terminated because end
+                // of data is reached.
+                else {
+                    end_reached = true;
+                }
+
+            }
+
+            // Return the completed string,
+            return out_str;
+
+        }
+        else {
+            throw Error("Unsupported encoding");
+        }
+
+
 
     }
 
@@ -1209,7 +1554,7 @@ function TreeStack(store, root_addr) {
 
     async function recurseDumpTreeBranches(addr, levels, i) {
         if (isBranchNodeAddr(addr)) {
-            const branch_node_data = await store.get(addr);
+            const branch_node_data = await fetchNode(addr);
             let larr = levels[i];
             if (larr === undefined) {
                 larr = [];
@@ -1262,8 +1607,8 @@ function TreeStack(store, root_addr) {
     }
 
 
-    function debugDumpStackState(println) {
-        println(ss.asString());
+    function debugDumpStackState(println, stack = ss) {
+        println( stack.asString() );
     }
 
 
@@ -1272,7 +1617,7 @@ function TreeStack(store, root_addr) {
 
         if ( isBranchNodeAddr(addr) ) {
 
-            const node_buf = await store.get(addr);
+            const node_buf = await fetchNode(addr);
             const size = node_buf.getSize();
 
             let this_computed_bytesize = Int64.ZERO;
@@ -1297,7 +1642,7 @@ function TreeStack(store, root_addr) {
         }
         else {
 
-            const node_buf = await store.get(addr);
+            const node_buf = await fetchNode(addr);
             return Int64.fromNumber( node_buf.getSize() );
 
         }
@@ -1316,14 +1661,14 @@ function TreeStack(store, root_addr) {
 
     // Locking feature to help prevent asynchronous access to the stack state.
 
-    function lock() {
+    /* async */ function lock() {
         if (locked === true) {
             throw Error('Multiple locks on TreeStack. Synchronous access is required.');
         }
         locked = true;
     }
 
-    function unlock() {
+    /* async */ function unlock() {
         if (locked === false) {
             throw Error('Unlock called while unlocked indicates synchronous issue.');
         }
@@ -1339,8 +1684,8 @@ function TreeStack(store, root_addr) {
 
     return {
 
-        lock,
-        unlock,
+        lock,           // async
+        unlock,         // async
 
         invalidate,
 

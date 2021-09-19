@@ -150,6 +150,8 @@ function TreeStack(store, root_addr) {
 
     const originating_root_addr = root_addr;
 
+    let temp_primitive_buffer;
+
     // The lock counter,
     let locked = false;
 
@@ -193,6 +195,14 @@ function TreeStack(store, root_addr) {
         return store.get(addr);
     }
 
+
+
+    function getTemporaryBuffer() {
+        if (temp_primitive_buffer === undefined) {
+            temp_primitive_buffer = Buffer.alloc(16);
+        }
+        return temp_primitive_buffer;
+    }
 
 
 
@@ -1643,6 +1653,21 @@ function TreeStack(store, root_addr) {
 
 
 
+    async function readUInt8() {
+        const temp_buf = getTemporaryBuffer();
+        await readBuffer(temp_buf, 0, 1);
+        return temp_buf.readUInt8(0);
+    }
+
+    /* async */ function writeUInt8(val) {
+        const temp_buf = getTemporaryBuffer();
+        temp_buf.writeUInt8(val, 0);
+        return writeBuffer(temp_buf, 0, 1);
+    }
+
+
+
+
 
 
     function recurseGetAllInMemoryAddresses(
@@ -1844,10 +1869,11 @@ function TreeStack(store, root_addr) {
         writeString,     // async
         readString,      // async
 
-//        readUInt8,       // async
-//        writeUInt8,      // async
-        readBuffer,    // async
-        writeBuffer,   // async
+        readUInt8,       // async
+        writeUInt8,      // async
+
+        readBuffer,      // async
+        writeBuffer,     // async
 
 
         getAllInMemoryAddresses,

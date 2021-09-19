@@ -1207,7 +1207,7 @@ function TreeStack(store, root_addr) {
     // Adds data to the end of a data node chain. This must only be used when
     // the cursor is positioned at the end point of ss.desired_key.
 
-    async function writeBufferToEnd(buf, offset, size) {
+    async function writeBufferAtEnd(buf, offset, size) {
 
         const max_node_size = store.getNodeDataByteSizeLimit();
 
@@ -1301,7 +1301,7 @@ function TreeStack(store, root_addr) {
     // Reads data from the current position and writes it to the given buf.
     // Will write data until either 'size' number of bytes has been read or
     // the end of the data has been reached.
-    async function copyToBuffer(buf, offset, size) {
+    async function readBuffer(buf, offset, size) {
 
         // Assert stack loaded,
         if ( ss.getSize() === 0 ) {
@@ -1350,7 +1350,7 @@ function TreeStack(store, root_addr) {
 
     // Reads data from the buffer and writes out to the key value at the
     // current position.
-    async function copyFromBuffer(buf, offset, size) {
+    async function writeBuffer(buf, offset, size) {
 
         // Assert stack loaded,
         if ( ss.getSize() === 0 ) {
@@ -1418,7 +1418,7 @@ function TreeStack(store, root_addr) {
         // If appending data to the end of the node,
         else if ( ss.lastStackEntry().right_key.neq( ss.desired_key ) ) {
 
-            await writeBufferToEnd(buf, offset, size);
+            await writeBufferAtEnd(buf, offset, size);
 
         }
         // Not adding data to the end of the leaf set, so determine how much
@@ -1463,7 +1463,7 @@ function TreeStack(store, root_addr) {
                     // Write the remaining part of the buffer to the end of
                     // the data chain,
 
-                    await writeBufferToEnd(buf, offset, size);
+                    await writeBufferAtEnd(buf, offset, size);
                     break;
 
                 }
@@ -1520,7 +1520,7 @@ function TreeStack(store, root_addr) {
                     // Write this section of the encoded string.
                     // Note that 'buf' can not be greater in size than some
                     // specified maximum size for the writethrough buffer.
-                    await copyFromBuffer( buf, 0, bytesize );
+                    await writeBuffer( buf, 0, bytesize );
 
                 }
 
@@ -1846,8 +1846,8 @@ function TreeStack(store, root_addr) {
 
 //        readUInt8,       // async
 //        writeUInt8,      // async
-        copyToBuffer,    // async
-        copyFromBuffer,  // async
+        readBuffer,    // async
+        writeBuffer,   // async
 
 
         getAllInMemoryAddresses,

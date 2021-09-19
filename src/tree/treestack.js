@@ -746,7 +746,7 @@ function TreeStack(store, root_addr) {
     }
 
 
-    async function splitAdjustDownSize( stack_level, size ) {
+    async function stackAdjustDownSize( stack_level, size ) {
 
         for (let se = stack_level; se >= 1; --se) {
             const sentry = ss.getEntry(se);
@@ -930,8 +930,8 @@ function TreeStack(store, root_addr) {
                               offset,
                               address_key_set );
 
-            if (byte_size_increase !== 0) {
-                await splitAdjustDownSize( stack_level - 1, byte_size_increase );
+            if ( byte_size_increase.neq( Int64.ZERO ) ) {
+                await stackAdjustDownSize( stack_level - 1, byte_size_increase );
             }
 
         }
@@ -1125,9 +1125,9 @@ function TreeStack(store, root_addr) {
 
 
     // Reads a chunk of bytes from the current cursor into the given buffer.
-    // The function will read an amount of bytes equal to, either: 1) The
-    // end of the current leaf node if bytes left >= 'min_size', 2) Up until
-    // 'max_size', 3) Up until the end of the data stored for the key.
+    // The function will read an amount of bytes until either: 1) The
+    // end of the current leaf node if bytes left >= 'min_size', 2) Read
+    // 'max_size' number of bytes, 3) The end of the data stored for the key.
     // Returns the number of bytes actually written into the buffer,
     async function readChunkToBuffer(buf, offset, min_size, max_size) {
 
@@ -1204,6 +1204,150 @@ function TreeStack(store, root_addr) {
 
 
 
+    // Adds data to the end of a data node chain. This must only be used when
+    // the cursor is positioned at the end point of ss.desired_key.
+
+    async function writeBufferToEnd(buf, offset, size) {
+
+        const max_node_size = store.getNodeDataByteSizeLimit();
+
+        const current_abs_position = ss.absolute_position;
+
+        // -----
+        // TODO: This section can be optimised. We don't need to traverse to
+        //  -1 the current position because the branch nodes should inform us
+        //  how full the previous leaf in the chain is.
+
+        // Yes, get the left leaf and see if we add anything to it,
+        const sc = StackState();
+        // Populate from the main stack,
+        sc.copyFrom( ss );
+        // Traverse to the previous leaf on the new stack,
+        await traverseToAbsolutePosition(
+                    sc, sc.desired_key,
+                    sc.absolute_position.sub( Int64.ONE ));
+
+        // Is it possible to add anything to this leaf?
+        const cur_leaf_size = sc.lastStackEntry().down_size;
+
+        // -----
+
+        // Is it worth adding to the leaf?
+        const worth_adding_to_leaf = (
+                cur_leaf_size + size <= max_node_size ||
+                cur_leaf_size < ( ( max_node_size * 0.80 ) | 0 ) );
+
+        if ( worth_adding_to_leaf ) {
+
+            // Make 'sc' the main stack,
+            ss.copyFrom( sc );
+
+            // Ensure the stack and leaf are mutable,
+            await ensureMutableStackAndLeaf();
+
+            const se = ss.lastStackEntry();
+            const leaf_end_p = se.down_size;
+            const leaf_end_p_num = leaf_end_p.toInt();
+            const remaining_leaf_capacity = max_node_size - leaf_end_p_num;
+            const write_amount = Math.min( remaining_leaf_capacity, size );
+
+            const leaf_node = await fetchNode(se.down_addr);
+            leaf_node.copyFromBuffer( buf, offset, write_amount, leaf_end_p_num );
+
+            offset += write_amount;
+            size -= write_amount;
+
+            // Adjust the 'down_size' values of the current stack,
+            await stackAdjustDownSize( ss.getSize() - 1, write_amount );
+
+            // Update 'absolute_end_position' since the data grew,
+            if (ss.absolute_end_position.gte( Int64.ZERO ) ) {
+                ss.absolute_end_position = ss.absolute_end_position.add(
+                                        Int64.fromNumber( write_amount ) );
+            }
+
+            // Traverse past the data that was added to the existing leaf,
+            await traverseToAbsolutePosition(
+                        ss, ss.desired_key,
+                        current_abs_position.add( Int64.fromNumber(write_amount) ));
+
+        }
+
+        // If there's data left to write, append as new leaf nodes,
+        if (size > 0) {
+
+            const change_position_amount = Int64.fromNumber( size );
+
+            // Insert key,
+            await ensureMutableStack();
+
+            // Append leaf nodes at the current cursor as specified by the
+            // main stack.
+            await appendNodesForBuffer(
+                        buf, offset, size,
+                        max_node_size, change_position_amount );
+
+            // Move forward position by the size we wrote,
+            await traverseToAbsolutePosition(
+                        ss, ss.desired_key,
+                        ss.absolute_position.add( change_position_amount ) );
+
+        }
+
+    }
+
+
+
+    // Reads data from the current position and writes it to the given buf.
+    // Will write data until either 'size' number of bytes has been read or
+    // the end of the data has been reached.
+    async function copyToBuffer(buf, offset, size) {
+
+        // Assert stack loaded,
+        if ( ss.getSize() === 0 ) {
+            throw Error("Stack not populated");
+        }
+
+        // Sanity checks,
+        if ( size > ( buf.length - offset ) ) {
+            throw Error("size to copy greater than buffer size");
+        }
+        if (size < 0) {
+            throw Error("Negative size");
+        }
+
+        let total_read_count = 0;
+
+        while (size > 0) {
+
+            const last_abs_position = ss.absolute_position;
+
+            const bytes_read = await readChunkToBuffer(buf, offset, 1, size);
+            // If amount_read is not 1 or greater, it means the end of the
+            // data has been reached, therefore return early.
+            if (bytes_read <= 0) {
+                break;
+            }
+
+            // Position cursor to the end of the consumed string,
+            await traverseToAbsolutePosition(
+                    ss, ss.desired_key,
+                    last_abs_position.add(
+                            Int64.fromNumber( bytes_read ) ) );
+
+            // Update for next chunk of data,
+            total_read_count += bytes_read;
+            offset += bytes_read;
+            size += bytes_read;
+
+        }
+
+        return total_read_count;
+
+    }
+
+
+
     // Reads data from the buffer and writes out to the key value at the
     // current position.
     async function copyFromBuffer(buf, offset, size) {
@@ -1217,6 +1361,12 @@ function TreeStack(store, root_addr) {
         if ( size > ( buf.length - offset ) ) {
             throw Error("size to copy greater than buffer size");
         }
+        if (size < 0) {
+            throw Error("Negative size");
+        }
+        if (size === 0) {
+            return;
+        }
 
         const max_node_size = store.getNodeDataByteSizeLimit();
         const change_position_amount = Int64.fromNumber( size );
@@ -1228,7 +1378,9 @@ function TreeStack(store, root_addr) {
             // error because the position is out of range,
 
             // In the case of key not being present and relative position being
-            // in range, the positions should all be the same and positive,
+            // in range, the positions should all be the same and positive.
+            // If this is not the case then raise a position out of range
+            // error.
 
             if ( ss.absolute_start_position.lt( Int64.ZERO ) ||
                  ss.absolute_end_position.lt( Int64.ZERO ) ||
@@ -1253,64 +1405,20 @@ function TreeStack(store, root_addr) {
                         buf, offset, size,
                         max_node_size, change_position_amount );
 
+            // Move forward position by the size we wrote,
+            await traverseToAbsolutePosition(
+                        ss, ss.desired_key,
+                        ss.absolute_position.add( change_position_amount ) );
+
         }
 
         // So we know there's existing data for the given key.
-        // Are we appending data to the end of the node?
+        //     ss.desired_key.eq( ss.loaded_key )
+        //
+        // If appending data to the end of the node,
         else if ( ss.lastStackEntry().right_key.neq( ss.desired_key ) ) {
 
-            // Yes, get the left leaf and see if we add anything to it,
-            const sc = StackState();
-            // Populate from the main stack,
-            sc.copyFrom( ss );
-            // Traverse to the previous leaf on the new stack,
-            await traverseToAbsolutePosition(
-                        sc, sc.desired_key,
-                        sc.absolute_position.sub( Int64.ONE ));
-
-            // Is it possible to add anything to this leaf?
-            const cur_leaf_size = sc.lastStackEntry().down_size;
-
-            // Is it worth adding to the leaf?
-            const worth_adding_to_leaf = (
-                    cur_leaf_size + size <= max_node_size ||
-                    cur_leaf_size < ( ( max_node_size * 0.80 ) | 0 ) );
-
-            if ( worth_adding_to_leaf ) {
-
-//                console.log("Will add to end of leaf!");
-
-                // Make 'sc' the main stack,
-                ss.copyFrom( sc );
-
-                // Ensure the stack and leaf are mutable,
-                await ensureMutableStackAndLeaf();
-
-                throw Error("PENDING: Append to existing.");
-
-            }
-            else {
-
-                // Not worth adding to the last leaf node, so just append nodes
-                // to the end of the node chain.
-
-//                console.log("Can not add to leaf :(");
-
-                // Insert key,
-                await ensureMutableStack();
-
-                // Append leaf nodes at the current cursor as specified by the
-                // main stack.
-                await appendNodesForBuffer(
-                            buf, offset, size,
-                            max_node_size, change_position_amount );
-
-            }
-
-//                console.log("At END!");
-
-//                debugDumpStackState( console.log, sc );
-
+            await writeBufferToEnd(buf, offset, size);
 
         }
         // Not adding data to the end of the leaf set, so determine how much
@@ -1318,15 +1426,51 @@ function TreeStack(store, root_addr) {
         // more nodes we have to add,
         else {
 
-            throw Error("PENDING: Overwrite existing (at least partially).");
+            // This loop overwrites existing data in the leaf nodes,
+            while (size > 0) {
+
+                // Ensure the stack and leaf are mutable,
+                await ensureMutableStackAndLeaf();
+
+                const se = ss.lastStackEntry();
+
+                // The position in the leaf of the cursor,
+                const int64_pos_in_leaf = ss.absolute_position.sub( se.left_offset );
+                let pos_in_leaf = int64_pos_in_leaf.toInt();
+                // The number of bytes left until the end of the current leaf node,
+                let byte_to_leaf_end = se.down_size.sub( int64_pos_in_leaf ).toInt();
+
+                // Fetch the leaf node data,
+                const leaf_node_buf = await fetchNode( se.down_addr );
+
+                // The amount to write,
+                const write_amount = Math.min( byte_to_leaf_end, size );
+                leaf_node_buf.copyFromBuffer( buf, offset, write_amount, pos_in_leaf );
+
+                offset += write_amount;
+                size -= write_amount;
+
+                // Transition forward,
+                await traverseToAbsolutePosition(
+                            ss, ss.desired_key,
+                            ss.absolute_position.add( write_amount ) );
+
+                // If there's still data left to write to data node, and the
+                // cursor is at the end,
+                if ( size > 0 &&
+                     ss.lastStackEntry().right_key.neq( ss.desired_key ) ) {
+
+                    // Write the remaining part of the buffer to the end of
+                    // the data chain,
+
+                    await writeBufferToEnd(buf, offset, size);
+                    break;
+
+                }
+
+            }  // while (size > 0)
 
         }
-
-        // Move forward position by the size we wrote,
-
-        await traverseToAbsolutePosition(
-                    ss, ss.desired_key,
-                    ss.absolute_position.add( change_position_amount ) );
 
     }
 
@@ -1702,7 +1846,7 @@ function TreeStack(store, root_addr) {
 
 //        readUInt8,       // async
 //        writeUInt8,      // async
-//        copyToBuffer,    // async
+        copyToBuffer,    // async
         copyFromBuffer,  // async
 
 

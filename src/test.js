@@ -246,6 +246,57 @@ async function checkTestData(db, test_data) {
 }
 
 
+// Do some shift tests,
+
+async function doShiftTestData(db, test_data) {
+
+    const tx = db.tx();
+
+    try {
+
+        const keys = [];
+        for (const keyv in test_data) {
+            keys.push(keyv);
+        }
+
+        const keyv = keys[ ( keys.length >> 1 ) + 3 ];
+
+        const key_data = test_data[ keyv ];
+        const key = Key( KEY_HIGH_INT64, Int64.fromNumber( keyv ) );
+        const data = tx.getDataValue(key);
+
+        console.log( key );
+
+        data.start();
+        const read_data = await data.readString();
+
+        const test_text_str = ' Hello World - Here is the text we inserted! ';
+
+        data.setPosition( Int64.fromNumber( -48 ) );
+        await data.writeString(test_text_str);
+        data.setPosition( Int64.fromNumber( 2 ) );
+        await data.writeString(test_text_str);
+
+
+//        data.setPosition( Int64.fromNumber( ( 8192 * 4 ) - 5 ) );
+
+        data.start();
+        const mod_read_data = await data.readString();
+
+//        console.log( read_data );
+//        console.log( key_data );
+//        console.log( read_data.length );
+        console.log( mod_read_data );
+
+    }
+    finally {
+        tx.close();
+    }
+
+}
+
+
+
 
 
 function createTestData() {
@@ -286,6 +337,7 @@ async function run2() {
     await dumpTXInfo(db);
     await checkTestData(db, test_data);
 
+    await doShiftTestData(db, test_data);
 
 }
 

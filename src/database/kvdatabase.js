@@ -29,6 +29,8 @@ function DataValue(key, performAsyncTreeStackOp) {
     // Positive value is position relative to the start.
     let relative_position = Int64.NEG_ONE;
 
+    let update_stack = true;
+
     function getKey() {
         return key;
     }
@@ -42,6 +44,7 @@ function DataValue(key, performAsyncTreeStackOp) {
             throw Error("Expecting Int64");
         }
         relative_position = position;
+        update_stack = true;
     }
 
     // Returns the position (Int64 type) relative to the start of the data.
@@ -52,10 +55,12 @@ function DataValue(key, performAsyncTreeStackOp) {
 
     function start() {
         relative_position = Int64.ZERO;
+        update_stack = true;
     }
 
     function end() {
         relative_position = Int64.NEG_ONE;
+        update_stack = true;
     }
 
     function getSize() {
@@ -72,8 +77,11 @@ function DataValue(key, performAsyncTreeStackOp) {
 
         return performAsyncTreeStackOp( async (tree_stack) => {
 
-            // Position stack at relative position,
-            await tree_stack.setupStackForRelativePosition( key, relative_position );
+            if (update_stack === true) {
+                // Position stack at relative position,
+                await tree_stack.setupStackForRelativePosition( key, relative_position );
+                update_stack = false;
+            }
 
             // Perform the operation on the tree stack.
             const ret = await processFunction(tree_stack);

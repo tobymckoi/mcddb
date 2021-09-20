@@ -143,10 +143,12 @@ function StackState() {
             throw Error("Assert failed, different");
         }
         if (data.absolute_start_position.neq(Int64.NEG_ONE) &&
+            in_stack.absolute_start_position.neq(Int64.NEG_ONE) &&
             data.absolute_start_position.neq(in_stack.absolute_start_position)) {
             throw Error("Assert failed, different");
         }
         if (data.absolute_end_position.neq(Int64.NEG_ONE) &&
+            in_stack.absolute_end_position.neq(Int64.NEG_ONE) &&
             data.absolute_end_position.neq(in_stack.absolute_end_position)) {
             throw Error("Assert failed, different");
         }
@@ -937,9 +939,7 @@ function TreeStack(store, root_addr) {
     }
 
 
-    async function stackAdjustDownSize( stack_level, size ) {
-
-        const size_int64 = Int64.fromNumber(size);
+    async function stackAdjustDownSize( stack_level, size_int64 ) {
 
         for (let se = stack_level; se >= 1; --se) {
             const sentry = ss.getEntry(se);
@@ -972,7 +972,7 @@ function TreeStack(store, root_addr) {
     // Assumes the stack is set up such that it is positioned on the key and
     // absolute_position.
     //
-    // This function make not actually perform a split operation if there is
+    // This function may not actually perform a split operation if there is
     // enough room on the branch to hold the given address/key sequence.
     // The sequence may either be 'Addr, size, Key' or
     // 'Addr, size, Key, Addr, size'.
@@ -990,7 +990,24 @@ function TreeStack(store, root_addr) {
         // Where to insert,
         const offset = current_se.addr_offset;
 
+        // Make sure to update left_offset from the split in the child if split
+        // on the right branch,
+        if (side === 1) {
+            current_se.left_offset = current_se.left_offset.add( address_key_set[1] );
+        }
+        if (side === 0) {
+            // Little hacky, make sure to set right_key for the guaranteed
+            // case when we setting reference to the leaf node,
+            current_se.right_key = address_key_set[2];
+        }
+
+        current_se.down_addr = address_key_set[ side * 3 ];
+        current_se.down_size = address_key_set[ ( side * 3 ) + 1 ];
+
+        current_se.addr_offset += (side * 40);
+
         const needs_split = isBranchAtCapacity( branch_buffer );
+        let split_count = needs_split ? 1 : 0;
 
         if ( needs_split ) {
 
@@ -1028,8 +1045,11 @@ function TreeStack(store, root_addr) {
             // Now we have split buffer that we can insert the address_key_set
             // into,
 
+            let used_branch_buffer, used_offset;
+
             if ( offset_on_right_branch ) {
                 // Insert to right branch,
+                used_branch_buffer = right_branch_buffer;
                 const modified_offset = offset - midpoint_offset - 40;
                 current_se.addr_offset = modified_offset + (side * 40);
                 current_se.left_key = midpoint_key;
@@ -1039,15 +1059,26 @@ function TreeStack(store, root_addr) {
             }
             else {
                 // Insert to left branch,
-                current_se.right_key = midpoint_key;
-                current_se.addr_offset += (side * 40);
+                used_branch_buffer = branch_buffer;
+//                current_se.right_key = midpoint_key;
                 insertIntoBranch( branch_buffer,
                                   offset,
                                   address_key_set );
             }
 
-            current_se.down_addr = address_key_set[ side * 3 ];
-            current_se.down_size = address_key_set[ ( side * 3 ) + 1 ];
+            const used_addr_offset = current_se.addr_offset;
+            // Update the left key,
+            if (used_addr_offset > 0) {
+                const key_to_set = used_branch_buffer.readValue128(
+                                                        used_addr_offset - 16);
+                current_se.left_key = key_to_set;
+            }
+            // if (used_addr_offset < used_branch_buffer.getSize() - 24) {
+            //     const key_to_set = used_branch_buffer.readValue128(
+            //                                             used_addr_offset + 24);
+            //     console.log({ type:'right_key', prev_key: current_se.right_key, key_to_set });
+            //     current_se.right_key = key_to_set;
+            // }
 
             // console.log("Left: ", branchAsString(branch_buffer) );
             // console.log("Right: ", branchAsString(right_branch_buffer) );
@@ -1071,7 +1102,7 @@ function TreeStack(store, root_addr) {
                 // Recurse to the previous stack level,
                 // console.log(split_info);
                 // console.log({offset_on_right_branch,byte_size_increase});
-                await splitInsert( stack_level - 1,
+                split_count += await splitInsert( stack_level - 1,
                                    split_info,
                                    byte_size_increase,
                                    offset_on_right_branch ? 1 : 0   // side
@@ -1105,26 +1136,11 @@ function TreeStack(store, root_addr) {
 
             }
 
-
         }
         else {
 
             // There's room here to hold the address_key_set, so insert it into
             // the branch,
-
-            current_se.down_addr = address_key_set[ side * 3 ];
-            current_se.down_size = address_key_set[ ( side * 3 ) + 1 ];
-            if (side === 0) {
-                // Little hacky, make sure to set right_key for the guaranteed
-                // case when we setting reference to the leaf node,
-                current_se.right_key = address_key_set[2];
-            }
-            current_se.addr_offset += (side * 40);
-            if (side === 1) {
-                // If on right side, adjust left_offset accordingly,
-                current_se.left_offset = current_se.left_offset.add(
-                                                        address_key_set[ 1 ]);
-            }
 
             insertIntoBranch( branch_buffer,
                               offset,
@@ -1137,6 +1153,7 @@ function TreeStack(store, root_addr) {
             // Update the left and right key of the current stack entry
             // according to the side travelled.
             const addr_offset = current_se.addr_offset;
+
             let left_key;
             // If right side, set left key from address_key_set,
             if (side === 1) {
@@ -1165,13 +1182,20 @@ function TreeStack(store, root_addr) {
 
         }
 
-        return needs_split;
+        return split_count;
 
     }
 
 
 
+    // Note that you can get a little bit of extra performance by setting
+    // these to false, however, the performance difference will not really be
+    // noticable because split heavy workloads are rare.
 
+    // True for stack refresh on split operation,
+    const SAFER_SPLITS = true;
+    // Assert the stack was correctly set up by the split operation,
+    const SPLIT_ASSERTS = true;
 
 
     // Inserts a new leaf node into the tree with the given Key and at the
@@ -1183,13 +1207,46 @@ function TreeStack(store, root_addr) {
 
         const address_key_set = [ leaf_addr, leaf_size, key ];
 
-        const did_split = await splitInsert(
+        const split_count = await splitInsert(
                             ss.getSize() - 1, address_key_set, leaf_size, 0 );
 
         // Make sure 'loaded_key' is refreshed,
         ss.loaded_key = key;
 
-        return did_split;
+        // Did this insert cause a tree split to happen?
+        if (split_count > 0) {
+
+            if (SAFER_SPLITS || SPLIT_ASSERTS) {
+
+                const alt_ss = StackState();
+                await stackLoadToStartOfKey( alt_ss, key );
+                await traverseToAbsolutePosition( alt_ss, key, absolute_pos );
+
+                if (SPLIT_ASSERTS) {
+                    try {
+                        alt_ss.assertSameAs(ss);
+                    }
+                    catch (err) {
+                        console.error("ASSERT FAILED!");
+                        console.error("splitInsert resulted in stack state different from control");
+                        console.error("SPLIT COUNT: ", split_count);
+//                        console.error("PREVIOUS:");
+//                        debugDumpStackState(console.error, prev_ss);
+                        console.error("WANTED:");
+                        debugDumpStackState(console.error, alt_ss);
+                        console.error("GOT:");
+                        debugDumpStackState(console.error, ss);
+//                        throw err;
+                    }
+                }
+
+                ss.copyFrom( alt_ss );
+
+            }
+
+        }
+
+        return split_count;
 
     }
 
@@ -1346,18 +1403,15 @@ function TreeStack(store, root_addr) {
 
         }
 
-        let did_split = false;
+        let split_count = 0;
 
         // Insert leaf node(s) in reverse order,
         for ( let i = leaf_buf_set.length - 1; i >= 0; --i ) {
             // Insert node into tree,
             const new_leaf_node_buf = leaf_buf_set[i];
-            const split_here = await insertLeafNodeToTree(
-                        ss.desired_key, ss.absolute_start_position,
+            split_count += await insertLeafNodeToTree(
+                        ss.desired_key, ss.absolute_position,
                         new_leaf_node_buf);
-            if (split_here) {
-                did_split = true;
-            }
         }
 
         // Change 'absolute_end_position',
@@ -1365,7 +1419,7 @@ function TreeStack(store, root_addr) {
             ss.absolute_end_position = ss.absolute_end_position.add( change_position_amount );
         }
 
-        return did_split;
+        return split_count;
 
     }
 
@@ -1508,10 +1562,10 @@ function TreeStack(store, root_addr) {
             offset += write_amount;
             size -= write_amount;
 
-            // Adjust the 'down_size' values of the current stack,
-            await stackAdjustDownSize( ss.getSize() - 1, write_amount );
-
             const write_amount_int64 = Int64.fromNumber( write_amount );
+
+            // Adjust the 'down_size' values of the current stack,
+            await stackAdjustDownSize( ss.getSize() - 1, write_amount_int64 );
 
             // Update 'absolute_end_position' since the data grew,
             if (ss.absolute_end_position.gte( Int64.ZERO ) ) {
@@ -1621,6 +1675,8 @@ function TreeStack(store, root_addr) {
             return;
         }
 
+        const seeking_abs_position = ss.absolute_position;
+
         const max_node_size = store.getNodeDataByteSizeLimit();
         const change_position_amount = Int64.fromNumber( size );
 
@@ -1640,7 +1696,6 @@ function TreeStack(store, root_addr) {
                  ss.absolute_position.neq( ss.absolute_start_position ) ||
                  ss.absolute_position.neq( ss.absolute_end_position ) ) {
 
-                debugDumpStackState(console.error);
                 throw positionOutOfBoundsError();
 
             }

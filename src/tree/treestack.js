@@ -1872,7 +1872,7 @@ function TreeStack(store, root_addr) {
 //        debugDumpStackState( console.log );
 
         if ( ss.desired_key.neq( ss.loaded_key ) ) {
-            throw new Error("Position out of range");
+            throw positionOutOfBoundsError();
         }
 
         if (encoding === 'utf8') {

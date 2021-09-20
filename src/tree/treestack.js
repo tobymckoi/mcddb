@@ -3,8 +3,7 @@
 const { KeyStatics } = require('./key.js');
 
 const { isBranchNodeAddr,
-        isStoreAddr,
-        PROC_EMPTY_TREE_ADDR
+        isStoreAddr
       } = require('../store/addr.js');
 
 const Int64 = require('../util/int64.js');
@@ -1045,7 +1044,7 @@ function TreeStack(store, root_addr) {
             // Now we have split buffer that we can insert the address_key_set
             // into,
 
-            let used_branch_buffer, used_offset;
+            let used_branch_buffer;
 
             if ( offset_on_right_branch ) {
                 // Insert to right branch,
@@ -1203,12 +1202,12 @@ function TreeStack(store, root_addr) {
     async function insertLeafNodeToTree(key, absolute_pos, leaf_node_buffer) {
 
         const leaf_addr = leaf_node_buffer.getAddr();
-        const leaf_size = Int64.fromNumber( leaf_node_buffer.getSize() );
+        const leaf_size_int64 = Int64.fromNumber( leaf_node_buffer.getSize() );
 
-        const address_key_set = [ leaf_addr, leaf_size, key ];
+        const address_key_set = [ leaf_addr, leaf_size_int64, key ];
 
         const split_count = await splitInsert(
-                            ss.getSize() - 1, address_key_set, leaf_size, 0 );
+                        ss.getSize() - 1, address_key_set, leaf_size_int64, 0 );
 
         // Make sure 'loaded_key' is refreshed,
         ss.loaded_key = key;
@@ -1583,7 +1582,7 @@ function TreeStack(store, root_addr) {
         // If there's data left to write, append as new leaf nodes,
         if (size > 0) {
 
-            const change_position_amount = Int64.fromNumber( size );
+            const change_position_amount_int64 = Int64.fromNumber( size );
 
             // Insert key,
             await ensureMutableStack();
@@ -1592,12 +1591,12 @@ function TreeStack(store, root_addr) {
             // main stack.
             await appendNodesForBuffer(
                         buf, offset, size,
-                        max_node_size, change_position_amount );
+                        max_node_size, change_position_amount_int64 );
 
             // Move forward position by the size we wrote,
             await traverseToAbsolutePosition(
                         ss, ss.desired_key,
-                        ss.absolute_position.add( change_position_amount ) );
+                        ss.absolute_position.add( change_position_amount_int64 ) );
 
         }
 
@@ -1674,8 +1673,6 @@ function TreeStack(store, root_addr) {
         if (size === 0) {
             return;
         }
-
-        const seeking_abs_position = ss.absolute_position;
 
         const max_node_size = store.getNodeDataByteSizeLimit();
         const change_position_amount = Int64.fromNumber( size );
@@ -1779,23 +1776,6 @@ function TreeStack(store, root_addr) {
             }  // while (size > 0)
 
         }
-
-        // // -----
-        //
-        // const stack_check = StackState();
-        // const relative_position = getRelativePosition();
-        // await internalSetupStackForRelativePosition(
-        //                 stack_check, ss.desired_key, relative_position );
-        // try {
-        //     stack_check.assertSameAs(ss);
-        // }
-        // catch (err) {
-        //     console.log("WANTED:");
-        //     debugDumpStackState(console.log, stack_check);
-        //     console.log("GOT:");
-        //     debugDumpStackState(console.log, ss);
-        //     throw err;
-        // }
 
     }
 

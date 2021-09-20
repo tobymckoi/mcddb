@@ -91,24 +91,22 @@ function immutableCopy(buf, buf_len) {
 const inspect = Symbol.for('nodejs.util.inspect.custom');
 
 
+
 // Value128 Class that uses private field to ensure the buffer is secure and
 // immutable.
 
 class Value128 {
 
-    // Private field,
-    #value_buffer;
-
     constructor(val, val2) {
-         this.#value_buffer = valueToByteBuffer(val, val2);
+         this._value_buffer = valueToByteBuffer(val, val2);
     }
 
     copyTo(buf, offset) {
-        return this.#value_buffer.copy(buf, offset, 0, 16);
+        return this._value_buffer.copy(buf, offset, 0, 16);
     }
 
     asString() {
-        return this.#value_buffer.toString('hex');
+        return this._value_buffer.toString('hex');
     }
 
     [inspect]() {
@@ -116,19 +114,19 @@ class Value128 {
     }
 
     asBuffer() {
-        return immutableCopy(this.#value_buffer, 16);
+        return immutableCopy(this._value_buffer, 16);
     }
 
     byteAt(offset) {
         if (offset >= 0 && offset < 16) {
-            return this.#value_buffer.readUInt8(offset);
+            return this._value_buffer.readUInt8(offset);
         }
         throw Error("Out of range");
     }
 
     bigIntAt(offset) {
         if (offset >= 0 && offset <= 8) {
-            return this.#value_buffer.readBigInt64BE(offset);
+            return this._value_buffer.readBigInt64BE(offset);
         }
         throw Error("Out of range");
     }
@@ -153,30 +151,118 @@ class Value128 {
     }
 
     isEqual(n) {
-        return this.#value_buffer.equals(n.#value_buffer);
+        return this._value_buffer.equals(n._value_buffer);
     }
 
     compareTo(n) {
-        return this.#value_buffer.compare(n.#value_buffer);
+        return this._value_buffer.compare(n._value_buffer);
     }
 
     isBufferEqual(buf) {
-        return this.#value_buffer.equals(buf);
+        return this._value_buffer.equals(buf);
     }
 
     compareBufferTo(buf) {
-        return this.#value_buffer.compare(buf);
+        return this._value_buffer.compare(buf);
     }
 
     hashCode() {
-        return hashCalculation(this.#value_buffer, HASH_SEED);
+        return hashCalculation(this._value_buffer, HASH_SEED);
     }
 
 }
 
 
+
+// // Value128 Class that uses private field to ensure the buffer is secure and
+// // immutable.
+//
+// class Value128 {
+//
+//     // Private field,
+//     #value_buffer;
+//
+//     constructor(val, val2) {
+//          this.#value_buffer = valueToByteBuffer(val, val2);
+//     }
+//
+//     copyTo(buf, offset) {
+//         return this.#value_buffer.copy(buf, offset, 0, 16);
+//     }
+//
+//     asString() {
+//         return this.#value_buffer.toString('hex');
+//     }
+//
+//     [inspect]() {
+//         return `< ${this.asString()} >`;
+//     }
+//
+//     asBuffer() {
+//         return immutableCopy(this.#value_buffer, 16);
+//     }
+//
+//     byteAt(offset) {
+//         if (offset >= 0 && offset < 16) {
+//             return this.#value_buffer.readUInt8(offset);
+//         }
+//         throw Error("Out of range");
+//     }
+//
+//     bigIntAt(offset) {
+//         if (offset >= 0 && offset <= 8) {
+//             return this.#value_buffer.readBigInt64BE(offset);
+//         }
+//         throw Error("Out of range");
+//     }
+//
+//     eq(n) {
+//         return this.isEqual(n) === true;
+//     }
+//     neq(n) {
+//         return this.isEqual(n) === false;
+//     }
+//     gt(n) {
+//         return this.compareTo(n) > 0;
+//     }
+//     gte(n) {
+//         return this.compareTo(n) >= 0;
+//     }
+//     lt(n) {
+//         return this.compareTo(n) < 0;
+//     }
+//     lte(n) {
+//         return this.compareTo(n) <= 0;
+//     }
+//
+//     isEqual(n) {
+//         return this.#value_buffer.equals(n.#value_buffer);
+//     }
+//
+//     compareTo(n) {
+//         return this.#value_buffer.compare(n.#value_buffer);
+//     }
+//
+//     isBufferEqual(buf) {
+//         return this.#value_buffer.equals(buf);
+//     }
+//
+//     compareBufferTo(buf) {
+//         return this.#value_buffer.compare(buf);
+//     }
+//
+//     hashCode() {
+//         return hashCalculation(this.#value_buffer, HASH_SEED);
+//     }
+//
+// }
+
+
+function value128Create(val, val2) {
+    return new Value128(val, val2);
+}
+
+
 // Export class create function,
 
-module.exports = (val, val2) => {
-    return new Value128(val, val2);
-};
+module.exports = value128Create;

@@ -136,17 +136,17 @@ function DataValue(key, performAsyncTreeStackOp) {
 
     // Reads the data value from the current position and writes out to the
     // given buffer,
-    /* async */ function copyToBuffer(buf, offset, size) {
+    /* async */ function readBuffer(buf, offset, size) {
         return stackProgressOperation( (tree_stack) => {
-            return tree_stack.copyToBuffer( buf, offset, size );
+            return tree_stack.readBuffer( buf, offset, size );
         });
     }
 
     // Reads data from the buffer and writes out to the data value at the
     // current position.
-    /* async */ function copyFromBuffer(buf, offset, size) {
+    /* async */ function writeBuffer(buf, offset, size) {
         return stackProgressOperation( (tree_stack) => {
-            return tree_stack.copyFromBuffer( buf, offset, size );
+            return tree_stack.writeBuffer( buf, offset, size );
         });
     }
 
@@ -169,8 +169,8 @@ function DataValue(key, performAsyncTreeStackOp) {
         readString,      // async
         writeString,     // async
 
-        copyToBuffer,    // async
-        copyFromBuffer,  // async
+        readBuffer,      // async
+        writeBuffer,     // async
 
         // readBigInt,
         // readBigUInt,

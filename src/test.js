@@ -259,7 +259,7 @@ async function doShiftTestData(db, test_data) {
             keys.push(keyv);
         }
 
-        const keyv = keys[ ( keys.length >> 1 ) + 3 ];
+        const keyv = keys[ ( keys.length >> 1 ) + 2 ];
 
         const key_data = test_data[ keyv ];
         const key = Key( KEY_HIGH_INT64, Int64.fromNumber( keyv ) );
@@ -274,6 +274,59 @@ async function doShiftTestData(db, test_data) {
 
         data.setPosition( Int64.fromNumber( -48 ) );
         await data.writeString(test_text_str);
+
+        console.log("-- START BUFFER INSERTS --");
+        const dbuf = Buffer.alloc(22);
+        dbuf.writeUInt8(70, 0);
+        dbuf.writeUInt8(71, 1);
+        dbuf.writeUInt8(70, 2);
+        dbuf.writeUInt8(71, 3);
+        dbuf.writeUInt8(70, 4);
+        dbuf.writeUInt8(71, 5);
+        dbuf.writeUInt8(70, 6);
+        dbuf.writeUInt8(71, 7);
+        dbuf.writeUInt8(70, 8);
+        dbuf.writeUInt8(71, 9);
+        dbuf.writeUInt8(70, 10);
+        dbuf.writeUInt8(71, 11);
+        dbuf.writeUInt8(70, 12);
+        dbuf.writeUInt8(71, 13);
+        dbuf.writeUInt8(70, 14);
+        dbuf.writeUInt8(71, 15);
+        dbuf.writeUInt8(70, 16);
+        dbuf.writeUInt8(71, 17);
+        dbuf.writeUInt8(70, 18);
+        dbuf.writeUInt8(71, 19);
+        dbuf.writeUInt8(70, 20);
+        dbuf.writeUInt8(73, 21);
+        for (let n = 0; n < 89000; ++n) {
+            await data.writeBuffer( dbuf, 0, dbuf.length );
+        }
+
+        console.log("-- START SINGLE INSERTS --");
+        for (let n = 0; n < 19000; ++n) {
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(71);
+            await data.writeUInt8(70);
+            await data.writeUInt8(72);
+        }
+
         data.setPosition( Int64.fromNumber( 2 ) );
         await data.writeString(test_text_str);
 
@@ -287,6 +340,8 @@ async function doShiftTestData(db, test_data) {
 //        console.log( key_data );
 //        console.log( read_data.length );
         console.log( mod_read_data );
+
+        await tx.commit();
 
     }
     finally {
@@ -338,6 +393,8 @@ async function run2() {
     await checkTestData(db, test_data);
 
     await doShiftTestData(db, test_data);
+
+    await dumpTXInfo(db);
 
 }
 
@@ -436,4 +493,7 @@ async function run1() {
 
 }
 
-run2();
+
+run2().catch((err) => {
+    console.error(err);
+});

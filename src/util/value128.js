@@ -43,7 +43,7 @@ function valueToByteBuffer(val, val2) {
     }
     // Handle Int64 type,
     else if (Int64.isInt64(val)) {
-        const buf = Buffer.alloc(16);
+        const buf = Buffer.allocUnsafeSlow(16);
         buf.writeUInt32BE( val.getHighBitsUnsigned(), 0 );
         buf.writeUInt32BE( val.getLowBitsUnsigned(), 4 );
         buf.writeUInt32BE( val2.getHighBitsUnsigned(), 8 );
@@ -81,7 +81,7 @@ function ensureBufferSize(buf) {
 // Returns an immutable copy of the value buffer,
 
 function immutableCopy(buf, buf_len) {
-    const nbuf = Buffer.alloc(16);
+    const nbuf = Buffer.allocUnsafeSlow(16);
     buf.copy(nbuf, Math.max(0, 16 - buf_len), 0, Math.min(16, buf_len));
     return nbuf;
 }
@@ -132,10 +132,10 @@ class Value128 {
     }
 
     eq(n) {
-        return this.isEqual(n) === true;
+        return this._value_buffer.equals(n._value_buffer);
     }
     neq(n) {
-        return this.isEqual(n) === false;
+        return !this._value_buffer.equals(n._value_buffer);
     }
     gt(n) {
         return this.compareTo(n) > 0;
@@ -151,7 +151,7 @@ class Value128 {
     }
 
     isEqual(n) {
-        return this._value_buffer.equals(n._value_buffer);
+        return this.eq(n);
     }
 
     compareTo(n) {

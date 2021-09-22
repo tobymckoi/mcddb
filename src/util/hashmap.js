@@ -2,7 +2,7 @@
 
 // Integer hash map with linked list for key/value pairs on hash collisions.
 
-function HashMap(keyHash, keyEquals) {
+function HashMap(keyHash, keyEquals, max_array_size = 23173) {
 
     const jsmap = [];
 
@@ -14,8 +14,12 @@ function HashMap(keyHash, keyEquals) {
         };
     }
 
+    function calcKeyHash( key ) {
+        return keyHash( key ) % max_array_size;
+    }
+
     function get( key ) {
-        const hash = keyHash( key );
+        const hash = calcKeyHash( key );
         const f = jsmap[hash];
         if (f !== undefined) {
             let l = f;
@@ -30,7 +34,7 @@ function HashMap(keyHash, keyEquals) {
     }
 
     function set( key, value ) {
-        const hash = keyHash( key );
+        const hash = calcKeyHash( key );
         const f = jsmap[hash];
         if ( f !== undefined ) {
             let l = f;
@@ -48,7 +52,7 @@ function HashMap(keyHash, keyEquals) {
     }
 
     function remove( key ) {
-        const hash = keyHash( key );
+        const hash = calcKeyHash( key );
         const f = jsmap[hash];
         if ( f !== undefined ) {
             let p;
@@ -70,10 +74,15 @@ function HashMap(keyHash, keyEquals) {
         return undefined;
     }
 
+    function dump(println) {
+        println( JSON.stringify( jsmap, null, 2 ) );
+    }
+
     return {
         get,
         set,
-        remove
+        remove,
+        dump
     };
 
 }
